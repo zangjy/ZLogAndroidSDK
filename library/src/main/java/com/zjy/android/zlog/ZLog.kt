@@ -208,7 +208,7 @@ object ZLog {
         val builder = Log.newBuilder()
             .setSequence(getSeqValue())
             .setAppVersion(appVersion)
-            .setTimestamp(System.currentTimeMillis())
+            .setTimestamp(System.currentTimeMillis() / 1000)
             .setLogLevel(level)
             .setIdentify(identify)
             .setTag(tag)
