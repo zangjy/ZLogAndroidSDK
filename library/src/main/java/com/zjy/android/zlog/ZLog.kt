@@ -109,6 +109,7 @@ object ZLog {
      */
     fun preInit(application: Application) {
         App.setApplication(application)
+        identify = App.getSp().getString(SPConstant.IDENTIFY_VALUE_KEY)
     }
 
     /**
@@ -178,18 +179,12 @@ object ZLog {
     private fun getCallingMethodInfo(): Pair<String, Int> {
         val stackTrace = Thread.currentThread().stackTrace
 
-        var foundCurrentClass = false
-
         //遍历堆栈，找到在本类之后的第一个不是当前类的元素
         for (element in stackTrace) {
-            if (foundCurrentClass && element.className != this::class.java.name) {
+            if (element.className != this::class.java.name) {
                 val fileName = element.fileName
                 val lineNumber = element.lineNumber
                 return Pair(fileName, lineNumber)
-            }
-
-            if (element.className == this::class.java.name) {
-                foundCurrentClass = true
             }
         }
 
