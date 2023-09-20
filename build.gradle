@@ -1,0 +1,19 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+plugins {
+    id 'com.android.application' version '8.1.1' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.0' apply false
+    id 'com.android.library' version '8.1.1' apply false
+}
+
+ext {
+    //全局compileSdk
+    COMPILE_SDK = 34
+    //全局minSdk
+    MIN_SDK = 21
+    //全局targetSdk
+    TARGET_SDK = 34
+    //全局versionName
+    VERSION_NAME = "1.0.0"
+    //全局versionCode
+    VERSION_CODE = 100
+}

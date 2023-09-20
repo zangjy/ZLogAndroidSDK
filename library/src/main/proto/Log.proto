@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package zlog;
+
+option java_package = "com.zjy.android.zlog.proto";
+
+message Log {
+  enum Level {
+    INFO = 0;
+    DEBUG = 1;
+    VERBOSE = 2;
+    WARN = 3;
+    ERROR = 4;
+  }
+  int64 sequence = 1;
+  string systemVersion = 2;
+  string appVersion = 3;
+  int64 timestamp = 4;
+  Level logLevel = 5;
+  string identify = 6;
+  string tag = 7;
+  string msg = 8;
+}

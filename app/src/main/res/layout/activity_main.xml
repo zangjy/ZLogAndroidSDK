@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <data>
+
+    </data>
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:overScrollMode="never">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:padding="10dp">
+
+            <EditText
+                android:id="@+id/etServerPubKey"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="服务端公钥"
+                android:text="MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaCb4Tvue/9rGoUVUPrDqbBQXXO2Q2IUYKBvcCL/Bv23mkr5JdmDRQY5Gs4iRM36wu55BlkFAjsMej4rTC2eOLw=="
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/tvSharedKey"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:hint="共享密钥：-"
+                android:textSize="14sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/mbGenerateSharedKey"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="生成共享密钥"
+                android:textSize="14sp" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="10dp"
+                android:background="#dedede" />
+
+            <EditText
+                android:id="@+id/etEncrypt"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:hint="待加密数据"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/tvEncryptData"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:hint="加密后数据：-"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/tvLocalDecryptData"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:hint="本地解密后数据：-"
+                android:textSize="14sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/mbEncrypt"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="加密数据"
+                android:textSize="14sp" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="10dp"
+                android:background="#dedede" />
+
+            <EditText
+                android:id="@+id/etDecrypt"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:hint="待解密数据"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/tvDecryptData"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:hint="解密后数据：-"
+                android:textSize="14sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/mbDecrypt"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="解密数据"
+                android:textSize="14sp" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="20dp"
+                android:background="#dedede" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/mbNewPair"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="重新生成"
+                android:textSize="14sp" />
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+</layout>

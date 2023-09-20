@@ -1,0 +1,72 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.zjy.zlogandroidsdk'
+
+    compileSdk rootProject.ext.COMPILE_SDK
+
+    defaultConfig {
+        applicationId "com.zjy.zlogandroidsdk"
+        minSdk rootProject.ext.MIN_SDK
+        targetSdk rootProject.ext.TARGET_SDK
+        versionCode rootProject.ext.VERSION_CODE
+        versionName rootProject.ext.VERSION_NAME
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        release {
+            storeFile file("src/jks/keystore.jks")
+            storePassword "123456"
+            keyAlias "key0"
+            keyPassword "123456"
+            v2SigningEnabled true
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    //开启数据绑定
+    dataBinding {
+        enabled = true
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.10.1'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.9.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+
+    implementation 'com.github.zangjy:XBase:2.0.0-beta.14'
+    implementation project(path: ':library')
+    debugApi 'com.squareup.leakcanary:leakcanary-android:2.12'
+}
