@@ -179,12 +179,22 @@ object ZLog {
     private fun getCallingMethodInfo(): Pair<String, Int> {
         val stackTrace = Thread.currentThread().stackTrace
 
+        val currentClassName = this::class.java.name
+
+        var foundCurrentClass = false
+
         //遍历堆栈，找到在本类之后的第一个不是当前类的元素
         for (element in stackTrace) {
-            if (element.className != this::class.java.name) {
+            val className = element.className
+
+            if (foundCurrentClass && className != currentClassName) {
                 val fileName = element.fileName
                 val lineNumber = element.lineNumber
                 return Pair(fileName, lineNumber)
+            }
+
+            if (className == currentClassName) {
+                foundCurrentClass = true
             }
         }
 
