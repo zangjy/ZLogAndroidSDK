@@ -1,11 +1,10 @@
 package com.zjy.zlogandroidsdk.activity
 
-import android.os.SystemClock
 import com.zjy.android.zlog.ZLog
 import com.zjy.android.zlog.proto.LogOuterClass.Log
-import com.zjy.android.zlog.util.ThreadUtil
 import com.zjy.xbase.activity.BaseActivity
 import com.zjy.zlogandroidsdk.databinding.ActivityZlogTestBinding
+import kotlin.random.Random
 
 /**
  * 文件名：ZLogTestActivity
@@ -14,32 +13,60 @@ import com.zjy.zlogandroidsdk.databinding.ActivityZlogTestBinding
  * 描述：
  */
 class ZLogTestActivity : BaseActivity<ActivityZlogTestBinding>() {
-    private val longData by lazy {
-        "{\"status\":\"0\",\"data\":[{\"id\":\"WuaLsTH3Q4ay7hEMuPaNZA\",\"courseTypeName\":\"万物归一\",\"courseTypeSubclassName\":\"医师\",\"courseName\":\"课程1\",\"teachers\":\"测试老师\",\"imgUrl\":\"https://shijizhongshi-image.obs.cn-north-4.myhuaweicloud.com/2023/3/17/8256657215243829951/1678945261746.png\",\"palyTime\":\"0\",\"addtime\":1679035971000,\"isremmend\":0,\"hwassetId\":\"671a0b847aa67b7d3d4784f9a3da3b20\",\"hwUrl\":\"https://vodd.caiquecloud.com/asset/671a0b847aa67b7d3d4784f9a3da3b20/play_video/ceabca00b6af3c747135cd01733a4d72_1.m3u8\",\"hwSize\":22078464,\"hwDuration\":160,\"qualityList\":[{\"quality\":\"SD\",\"qurl\":\"https://vodd.caiquecloud.com/asset/671a0b847aa67b7d3d4784f9a3da3b20/play_video/ceabca00b6af3c747135cd01733a4d72_2.m3u8\",\"qsize\":13977600,\"qduration\":160},{\"quality\":\"HD\",\"qurl\":\"https://vodd.caiquecloud.com/asset/671a0b847aa67b7d3d4784f9a3da3b20/play_video/ceabca00b6af3c747135cd01733a4d72_1.m3u8\",\"qsize\":22078464,\"qduration\":160}],\"watchNumber\":73,\"newhwurl\":\"https://vodd.caiquecloud.com/asset/671a0b847aa67b7d3d4784f9a3da3b20/8807c355570dc8bee9aad8d355c2c3de.mp4\"},{\"id\":\"7Wh2cJj5TjGVGBcuc6py0Q\",\"courseTypeName\":\"万物归一\",\"courseTypeSubclassName\":\"医师\",\"courseName\":\"天天\",\"teachers\":\"李老师\",\"imgUrl\":\"https://shijizhongshi-image.obs.cn-north-4.myhuaweicloud.com/2023/3/8/5604686769269418873/8NPCINIU55LD0031.jpg\",\"palyTime\":\"0\",\"addtime\":1678246216000,\"isremmend\":0,\"hwassetId\":\"1f88249172d3a1d311ab42c841c910a8\",\"hwUrl\":\"https://vodd.caiquecloud.com/asset/1f88249172d3a1d311ab42c841c910a8/play_video/e2695235f643ee7e097bd0b285b6169b_2.m3u8\",\"hwSize\":852992,\"hwDuration\":9,\"qualityList\":[{\"quality\":\"SD\",\"qurl\":\"https://vodd.caiquecloud.com/asset/1f88249172d3a1d311ab42c841c910a8/play_video/e2695235f643ee7e097bd0b285b6169b_2.m3u8\",\"qsize\":852992,\"qduration\":9}],\"watchNumber\":32,\"newhwurl\":\"https://vodd.caiquecloud.com/asset/1f88249172d3a1d311ab42c841c910a8/d984712ea76c2d8b042bce6c22129226.mp4\"},{\"id\":\"Uy08V02_SkK84_gpg8hcjg\",\"courseTypeName\":\"万物归一\",\"courseTypeSubclassName\":\"医师\",\"courseName\":\"他物123\",\"teachers\":\"李老师\",\"describes\":\"欢迎同学听课\",\"imgUrl\":\"https://shijizhongshi-image.obs.cn-north-4.myhuaweicloud.com/2023/3/8/6054065544573806084/e0b41a06f005d2ef.jpg\",\"palyTime\":\"0\",\"addtime\":1678242246000,\"isremmend\":0,\"hwassetId\":\"2c6e4f344e9ebecfc3b3b1afe01a5e31\",\"hwUrl\":\"https://vodd.caiquecloud.com/asset/2c6e4f344e9ebecfc3b3b1afe01a5e31/play_video/b0165370e2288983db0246e0c399efba_2.m3u8\",\"hwSize\":1096704,\"hwDuration\":12,\"qualityList\":[{\"quality\":\"SD\",\"qurl\":\"https://vodd.caiquecloud.com/asset/2c6e4f344e9ebecfc3b3b1afe01a5e31/play_video/b0165370e2288983db0246e0c399efba_2.m3u8\",\"qsize\":1096704,\"qduration\":12}],\"watchNumber\":5,\"newhwurl\":\"https://vodd.caiquecloud.com/asset/2c6e4f344e9ebecfc3b3b1afe01a5e31/5640166cad6dbcf995bee46f6f045954.mp4\"}],\"count\":0}"
-    }
-
-    private val shortData by lazy {
-        "Test Data"
-    }
-
     override fun initObservers() {
 
     }
 
     override fun initListeners() {
-        binding.mbWriteLog.setOnClickListener {
-            ThreadUtil.runOnBackgroundThread(task = {
-                for (i in 1..100) {
-                    ZLog.writeOnlineLog(Log.Level.INFO, longData)
-                }
-            })
-        }
+
     }
 
     override fun initData() {
         Thread {
-            SystemClock.sleep(400)
-            ZLog.writeOnlineLog(Log.Level.INFO, shortData)
+            while (true) {
+                Thread.sleep((Random.nextInt(2000) + 2000).toLong())
+
+                val randomSentence = generateRandomChineseSentence()
+
+                val generateRandomLogLevel = generateRandomLogLevel()
+
+                ZLog.writeOnlineLog(generateRandomLogLevel, randomSentence)
+            }
         }.start()
+    }
+
+    private fun generateRandomChineseSentence(): String {
+        return mutableListOf(
+            "电视机告诉我，它想去旅行，于是它变成了飞船，我不得不跟着它探索宇宙。",
+            "今天，我试图用键盘编写一本小说，结果小说突然变成了一只彩色蝴蝶飞向天空。",
+            "我的冰箱开始跳舞，飘着音符，唱着歌。我加入它，舞动着，忘记了时间的存在。",
+            "把电视机遥控器当作魔杖，我点了一下，立刻飘浮在卧室里，看到了奇异的星际景象。",
+            "我的书本开始说话，告诉我关于时间旅行的秘密。我跟随着书本的指引进入了时光隧道。",
+            "突然之间，我的笔记本电脑屏幕显示了未来的预测，我开始思考着未来的可能性。",
+            "我与橡皮鸭子进行了深刻的对话，它向我透露了宇宙的机密，我不再感到孤独。",
+            "书桌上的杯子变成了时光机，我喝下一口，立刻回到了童年的记忆里。",
+            "每次我看向窗外的云朵，它们都会写出新的故事，告诉我未知的奇幻世界。",
+            "我在床上闭上眼睛，突然觉得自己在漫游星际，与外星生物交流着奇妙的语言。",
+            "餐桌上的刀叉开始演奏交响乐，我成为了指挥家，挥舞着餐具的音符。",
+            "书页逐渐浮空，组成了一座文字城市，我穿越其中，探索着未知的街道。",
+            "一片树叶飘进我的房间，告诉我关于宇宙的秘密密码，我开始解读它们。",
+            "我站在镜子前，看到自己的镜像独立出来，变成了我的对话伙伴。",
+            "突然，我的房子升空，变成了空中花园，我在悬浮中欣赏着星星的舞蹈。",
+            "电梯变成了时间机器，每次按下按钮，我穿越不同的年代。",
+            "用遥控器操控自己的思维，进入了梦境中的数字迷宫。",
+            "我用笔画出的涂鸦突然活了起来，组成了一场生动的艺术表演。",
+            "我的音响变成了口袋剧场，演绎着微型戏剧，我成为了观众和演员。",
+            "窗帘变成了时间门，每次拉开，我穿越到不同的现实世界。"
+        ).random()
+    }
+
+    private fun generateRandomLogLevel(): Log.Level {
+        return mutableListOf(
+            Log.Level.INFO,
+            Log.Level.DEBUG,
+            Log.Level.WARN,
+            Log.Level.ERROR,
+            Log.Level.VERBOSE
+        ).random()
     }
 }

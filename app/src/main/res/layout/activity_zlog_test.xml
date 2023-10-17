@@ -12,12 +12,5 @@
         android:orientation="vertical"
         android:padding="20dp">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/mbWriteLog"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="写日志"
-            android:textSize="14sp" />
     </LinearLayout>
 </layout>

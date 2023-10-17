@@ -8,6 +8,11 @@ package com.zjy.android.zlog.constant
  */
 object SPConstant {
     /**
+     * 应用ID
+     */
+    const val APP_ID_KEY = "APP_ID_KEY"
+
+    /**
      * 临时的会话ID
      */
     const val TMP_SESSION_ID_KEY = "TMP_SESSION_ID_KEY"
