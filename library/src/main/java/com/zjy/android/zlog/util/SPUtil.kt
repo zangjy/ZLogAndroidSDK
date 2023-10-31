@@ -3,6 +3,7 @@ package com.zjy.android.zlog.util
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
+import com.zjy.android.zlog.constant.SPConstant
 
 /**
  * 文件名：SPUtil
@@ -11,12 +12,12 @@ import android.content.SharedPreferences
  * 描述：
  */
 @SuppressLint("ApplySharedPref")
-class SPUtil private constructor(context: Context) {
+class SPUtil private constructor(context: Context, fileName: String) {
 
     private val sharedPreferences: SharedPreferences
 
     init {
-        sharedPreferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        sharedPreferences = context.getSharedPreferences(fileName, Context.MODE_PRIVATE)
     }
 
     fun putString(key: String, value: String, useCommit: Boolean = false) {
@@ -30,6 +31,19 @@ class SPUtil private constructor(context: Context) {
 
     fun getString(key: String, defaultValue: String = ""): String {
         return sharedPreferences.getString(key, defaultValue) ?: defaultValue
+    }
+
+    fun putLong(key: String, value: Long, useCommit: Boolean = false) {
+        val editor = sharedPreferences.edit().putLong(key, value)
+        if (useCommit) {
+            editor.commit()
+        } else {
+            editor.apply()
+        }
+    }
+
+    fun getLong(key: String, defaultValue: Long = 0L): Long {
+        return sharedPreferences.getLong(key, defaultValue)
     }
 
     fun remove(key: String, useCommit: Boolean = false) {
@@ -51,19 +65,15 @@ class SPUtil private constructor(context: Context) {
     }
 
     companion object {
-        private const val PREF_NAME = "zlog"
+        private val instances = mutableMapOf<String, SPUtil>()
 
-        private var instance: SPUtil? = null
-
-        fun getInstance(): SPUtil {
-            if (instance == null) {
-                synchronized(SPUtil::class.java) {
-                    if (instance == null) {
-                        instance = SPUtil(App.getApplication())
-                    }
+        fun getInstance(fileName: String = SPConstant.DEFAULT_SP_NAME): SPUtil {
+            synchronized(SPUtil::class.java) {
+                if (!instances.containsKey(fileName)) {
+                    instances[fileName] = SPUtil(App.getApplication(), fileName)
                 }
             }
-            return instance!!
+            return instances[fileName]!!
         }
     }
 }
