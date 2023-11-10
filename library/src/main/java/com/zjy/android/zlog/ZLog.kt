@@ -95,7 +95,7 @@ object ZLog {
             .rootPath("zlog") //设置日志根目录
             .expireDays(7) //设置日志过期时间，单位为天
             .isOfflineLog(true) //设置是否离线日志
-            .cacheFileSize(32) //设置缓存文件大小，单位为KB
+            .cacheFileSize(64) //设置缓存文件大小，单位为KB
             .maxFileSize(50) //设置单个日志文件最大大小，单位为MB
             .mergeCacheFileSeconds(30) //设置合并缓存文件到主文件的时间间隔，单位为秒
             .compress(true) //设置是否压缩日志
@@ -111,7 +111,7 @@ object ZLog {
             .rootPath("zlog") //设置日志根目录
             .expireDays(1) //设置日志过期时间，单位为天
             .isOfflineLog(false) //设置是否离线日志
-            .cacheFileSize(32) //设置缓存文件大小，单位为KB
+            .cacheFileSize(64) //设置缓存文件大小，单位为KB
             .maxFileSize(50) //单文件大小，单位为MB
             .mergeCacheFileSeconds(30) //设置合并缓存文件到主文件的时间间隔，单位为秒
             .compress(true) //设置是否压缩日志

@@ -518,13 +518,22 @@ class ZLogUtil private constructor(private val builder: Builder) {
                         flip()
                     }
 
-                //如果缓冲区不足以写入当前数据，则先将缓存文件合入主文件后再进行写入
-                if (dataToWrite.remaining() > (cacheFileBuffer?.remaining() ?: 0)) {
-                    mergeFile()
-                }
+                //当前数据的大小
+                val dataToWriteSize = dataToWrite.remaining()
 
-                //将数据写入缓冲区
-                cacheFileBuffer?.put(dataToWrite)
+                //如果当前数据的大小超过缓冲区设置的大小，则直接追加到主日志文件，不再经过缓冲区
+                if (dataToWriteSize > cacheFileSize) {
+                    //追加数据到主日志文件
+                    appendByteBufferToCurrentFile(dataToWrite)
+                } else {
+                    //如果缓冲区不足以写入当前数据，则先将缓存文件合入主文件后再进行写入
+                    if (dataToWriteSize > (cacheFileBuffer?.remaining() ?: 0)) {
+                        mergeFile()
+                    }
+
+                    //将数据写入缓冲区
+                    cacheFileBuffer?.put(dataToWrite)
+                }
 
                 //判断关闭标志位
                 if (closeFlag == 1) {
@@ -534,7 +543,9 @@ class ZLogUtil private constructor(private val builder: Builder) {
             }
 
             //将缓冲区数据写入缓存文件中并记录位置
-            forceCacheFileBuffer()
+            cacheFileBuffer?.force()
+
+            updateCacheFileLastPosition()
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -559,24 +570,15 @@ class ZLogUtil private constructor(private val builder: Builder) {
                     dataToWrite.put(buffer)
                     dataToWrite.flip()
 
-                    //将有效数据合入到主文件
-                    currentFileChannel?.write(dataToWrite)
-
-                    //强制刷新数据到文件
-                    currentFileChannel?.force(true)
+                    //追加数据到主日志文件
+                    appendByteBufferToCurrentFile(dataToWrite)
 
                     //清空缓存文件的缓冲区
                     buffer.clear()
 
-                    //重置缓存文件最后写入位置
-                    spUtil.putLong(cacheFileLastPositionKey, 0, true)
+                    //更新缓存文件上次写入位置
+                    updateCacheFileLastPosition()
                 }
-            }
-
-            //如果主文件大小超出设置的最大值，则创建新的主文件
-            if ((currentFile?.length() ?: 0) > maxFileSize) {
-                fileNumber++
-                createNewLogFile()
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -584,11 +586,25 @@ class ZLogUtil private constructor(private val builder: Builder) {
     }
 
     /**
-     * 将缓冲区数据写入缓存文件中并记录位置
+     * 追加数据到主日志文件
+     * @param data 要追加的数据
      */
-    private fun forceCacheFileBuffer() {
-        cacheFileBuffer?.force()
+    private fun appendByteBufferToCurrentFile(data: ByteBuffer) {
+        currentFileChannel?.write(data)
 
+        currentFileChannel?.force(true)
+
+        //如果主日志文件大小超出设置的最大值，则创建新的主文件
+        if ((currentFile?.length() ?: 0) > maxFileSize) {
+            fileNumber++
+            createNewLogFile()
+        }
+    }
+
+    /**
+     * 更新缓存文件上次写入位置
+     */
+    private fun updateCacheFileLastPosition() {
         spUtil.putLong(
             cacheFileLastPositionKey,
             (cacheFileBuffer?.position() ?: 0).toLong(),
