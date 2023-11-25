@@ -23,8 +23,9 @@ class SafeReadWriteLock() {
     }
 
     inner class SafeReadLock(private val readLock: ReentrantReadWriteLock.ReadLock) {
-        fun <T> withLock(
-            action: () -> T,
+        fun <T> runUnderLock(
+            onLock: () -> T,
+            onLockFailed: () -> Unit = {},
             waitTime: Long = 0,
             unit: TimeUnit = TimeUnit.MILLISECONDS,
             useTryLock: Boolean = true
@@ -32,32 +33,18 @@ class SafeReadWriteLock() {
             return if (useTryLock) {
                 if (readLock.tryLock(waitTime, unit)) {
                     try {
-                        action()
+                        onLock()
                     } finally {
                         readLock.unlock()
                     }
                 } else {
+                    onLockFailed()
                     null
                 }
             } else {
                 readLock.lock()
                 try {
-                    action()
-                } finally {
-                    readLock.unlock()
-                }
-            }
-        }
-
-        fun withFailedLock(
-            action: () -> Unit,
-            waitTime: Long = 0,
-            unit: TimeUnit = TimeUnit.MILLISECONDS,
-            useTryLock: Boolean = true
-        ) {
-            if (useTryLock && !readLock.tryLock(waitTime, unit)) {
-                try {
-                    action()
+                    onLock()
                 } finally {
                     readLock.unlock()
                 }
@@ -66,8 +53,9 @@ class SafeReadWriteLock() {
     }
 
     inner class SafeWriteLock(private val writeLock: ReentrantReadWriteLock.WriteLock) {
-        fun <T> withLock(
-            action: () -> T,
+        fun <T> runUnderLock(
+            onLock: () -> T,
+            onLockFailed: () -> Unit = {},
             waitTime: Long = 0,
             unit: TimeUnit = TimeUnit.MILLISECONDS,
             useTryLock: Boolean = true
@@ -75,32 +63,18 @@ class SafeReadWriteLock() {
             return if (useTryLock) {
                 if (writeLock.tryLock(waitTime, unit)) {
                     try {
-                        action()
+                        onLock()
                     } finally {
                         writeLock.unlock()
                     }
                 } else {
+                    onLockFailed()
                     null
                 }
             } else {
                 writeLock.lock()
                 try {
-                    action()
-                } finally {
-                    writeLock.unlock()
-                }
-            }
-        }
-
-        fun withFailedLock(
-            action: () -> Unit,
-            waitTime: Long = 0,
-            unit: TimeUnit = TimeUnit.MILLISECONDS,
-            useTryLock: Boolean = true
-        ) {
-            if (useTryLock && !writeLock.tryLock(waitTime, unit)) {
-                try {
-                    action()
+                    onLock()
                 } finally {
                     writeLock.unlock()
                 }

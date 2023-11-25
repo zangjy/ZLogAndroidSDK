@@ -25,6 +25,13 @@ import java.util.concurrent.atomic.AtomicLong
  */
 object ZLog {
     /**
+     * 延迟第一次执行的时间
+     */
+    private val initialDelayMillis by lazy {
+        10 * 1000L
+    }
+
+    /**
      * 上传实时日志的锁对象
      */
     private val uploadLogLock by lazy {
@@ -56,7 +63,7 @@ object ZLog {
      * 定时查询回捞任务的时间间隔（毫秒）
      */
     private val getTaskMillis by lazy {
-        30 * 1000L
+        60 * 1000L
     }
 
     /**
@@ -165,12 +172,12 @@ object ZLog {
         //定时上传实时日志(60s执行一次)
         uploadLogExecutor.scheduleAtFixedRate({
             putOnlineLog()
-        }, uploadLogMillis, uploadLogMillis, TimeUnit.MILLISECONDS)
+        }, initialDelayMillis, uploadLogMillis, TimeUnit.MILLISECONDS)
 
-        //定时查询日志回捞任务(30s执行一次)
+        //定时查询日志回捞任务(60s执行一次)
         getTaskExecutor.scheduleAtFixedRate({
             getLogTask()
-        }, getTaskMillis, getTaskMillis, TimeUnit.MILLISECONDS)
+        }, initialDelayMillis, getTaskMillis, TimeUnit.MILLISECONDS)
     }
 
     /**
@@ -283,7 +290,7 @@ object ZLog {
      */
     private fun putOnlineLog() {
         ThreadUtil.runOnBackgroundThread(task = {
-            uploadLogLock.lock().withLock({
+            uploadLogLock.lock().runUnderLock(onLock = {
                 val logList = onlineLog.readLog(System.currentTimeMillis() / 1000)
 
                 if (getRegisterInfo().third) {
@@ -329,7 +336,7 @@ object ZLog {
      */
     private fun uploadLogFile(taskInfo: GetTaskModel.GetTaskInfo) {
         ThreadUtil.runOnBackgroundThread(task = {
-            uploadLogFileLock.lock().withLock({
+            uploadLogFileLock.lock().runUnderLock(onLock = {
                 val latch = CountDownLatch(1)
 
                 //保存Zip的位置

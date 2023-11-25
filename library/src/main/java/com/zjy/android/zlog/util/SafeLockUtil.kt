@@ -17,8 +17,9 @@ class SafeLock {
     }
 
     inner class SafeLockHandle {
-        fun <T> withLock(
-            action: () -> T,
+        fun <T> runUnderLock(
+            onLock: () -> T,
+            onLockFailed: () -> Unit = {},
             waitTime: Long = 0,
             unit: TimeUnit = TimeUnit.MILLISECONDS,
             useTryLock: Boolean = true
@@ -26,32 +27,18 @@ class SafeLock {
             return if (useTryLock) {
                 if (lock.tryLock(waitTime, unit)) {
                     try {
-                        action()
+                        onLock()
                     } finally {
                         lock.unlock()
                     }
                 } else {
+                    onLockFailed()
                     null
                 }
             } else {
                 lock.lock()
                 try {
-                    action()
-                } finally {
-                    lock.unlock()
-                }
-            }
-        }
-
-        fun withFailedLock(
-            action: () -> Unit,
-            waitTime: Long = 0,
-            unit: TimeUnit = TimeUnit.MILLISECONDS,
-            useTryLock: Boolean = false
-        ) {
-            if (useTryLock && !lock.tryLock(waitTime, unit)) {
-                try {
-                    action()
+                    onLock()
                 } finally {
                     lock.unlock()
                 }

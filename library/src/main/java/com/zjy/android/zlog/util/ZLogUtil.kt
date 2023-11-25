@@ -2,6 +2,12 @@ package com.zjy.android.zlog.util
 
 import com.zjy.android.zlog.constant.SPConstant
 import com.zjy.android.zlog.proto.LogOuterClass.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileInputStream
 import java.io.RandomAccessFile
@@ -13,7 +19,6 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.Executors
-import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
@@ -30,6 +35,7 @@ class ZLogUtil private constructor(private val builder: Builder) {
         SPUtil.getInstance(SPConstant.CACHE_FILE_LAST_POSITION_SP_NAME)
     }
 
+    //<editor-fold desc="基础配置">
     /**
      * 日志文件的根目录
      */
@@ -58,6 +64,7 @@ class ZLogUtil private constructor(private val builder: Builder) {
      */
     private var maxFileSize =
         (if (builder.maxFileSize <= 0) 50 else builder.maxFileSize) * 1024 * 1024
+    //</editor-fold>
 
     /**
      * 日志锁
@@ -65,10 +72,16 @@ class ZLogUtil private constructor(private val builder: Builder) {
     private val logLock = SafeReadWriteLock()
 
     /**
-     * 日志内容的队列
+     * 创建一个协程作用域，用于管理协程的生命周期和执行环境
      */
-    private val logBuffer = LinkedBlockingQueue<ByteArray>()
+    private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    /**
+     * 创建一个用于协程间通信的通道，传输 ByteArray 类型的数据
+     */
+    private val writeChannel = Channel<ByteArray>(capacity = Channel.UNLIMITED)
+
+    //<editor-fold desc="缓存文件相关">
     /**
      * 记录缓存文件上次写入位置的Key
      */
@@ -84,17 +97,9 @@ class ZLogUtil private constructor(private val builder: Builder) {
      * 缓存文件的缓冲区
      */
     private var cacheFileBuffer: MappedByteBuffer? = null
+    //</editor-fold>
 
-    /**
-     * 将日志队列中的数据写入到缓冲区的间隔（毫秒）
-     */
-    private var writeToCacheFileBufferMillis = 10 * 1000L
-
-    /**
-     * 写日志到缓冲区的线程
-     */
-    private val writeToCacheFileBufferExecutor = Executors.newSingleThreadScheduledExecutor()
-
+    //<editor-fold desc="主文件相关">
     /**
      * 日志文件当前的序号
      */
@@ -109,6 +114,7 @@ class ZLogUtil private constructor(private val builder: Builder) {
      * 当前的日志文件的通道
      */
     private var currentFileChannel: FileChannel? = null
+    //</editor-fold>
 
     /**
      * 合并缓存文件到主文件的间隔（毫秒）
@@ -126,33 +132,17 @@ class ZLogUtil private constructor(private val builder: Builder) {
      */
     private val dateFormat = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
 
-    /**
-     * 是否标记为关闭
-     */
-    private var closeFlag = 0
-
     init {
         createBaseDir()
         removeExpireFiles()
         createCacheFile()
         createNewLogFile()
-
-        writeToCacheFileBufferExecutor.scheduleAtFixedRate({
-            //只有当日志队列不为空时才尝试获取锁写入日志
-            if (logBuffer.size > 0) {
-                logLock.writeLock().withLock({
-                    writeToCacheFileBuffer()
-                })
-            }
-        }, writeToCacheFileBufferMillis, writeToCacheFileBufferMillis, TimeUnit.MILLISECONDS)
+        startWriting()
 
         mergeCacheFileExecutor.scheduleAtFixedRate({
-            //只有当缓冲区里有数据时才尝试获取锁合并文件
-            if ((cacheFileBuffer?.position() ?: 0) > 0) {
-                logLock.writeLock().withLock({
-                    mergeFile()
-                }, waitTime = 2000)
-            }
+            logLock.writeLock().runUnderLock(onLock = {
+                mergeFile()
+            }, waitTime = 2000)
         }, mergeCacheFileMillis, mergeCacheFileMillis, TimeUnit.MILLISECONDS)
     }
 
@@ -253,6 +243,144 @@ class ZLogUtil private constructor(private val builder: Builder) {
     }
 
     /**
+     * 在子线程中执行写日志操作
+     */
+    private fun startWriting() {
+        coroutineScope.launch {
+            for (logData in writeChannel) {
+                var shouldBreak = false
+
+                while (!shouldBreak) {
+                    logLock.writeLock().runUnderLock(onLock = {
+                        val shouldCompress = builder.compress
+                        val shouldEncrypt = builder.secretKey.isNotBlank()
+
+                        //压缩数据
+                        val compressedData = if (shouldCompress) {
+                            GZIPUtil.compressBytes(logData)
+                        } else {
+                            logData
+                        }
+
+                        //加密数据
+                        val encryptedData = if (shouldEncrypt) {
+                            AESUtil.encryptBytes(compressedData, builder.secretKey)
+                        } else {
+                            compressedData
+                        }
+
+                        //是否启用了加密
+                        val encryptionFlag: Byte = if (shouldEncrypt) 1 else 0
+
+                        //是否启用了压缩
+                        val compressionFlag: Byte = if (shouldCompress) 1 else 0
+
+                        //四个字节记录数据的长度
+                        val lengthBuffer = ByteBuffer.allocate(4).putInt(encryptedData.size)
+                        lengthBuffer.flip()
+
+                        //创建一个缓冲区
+                        val dataToWrite =
+                            ByteBuffer.allocate(1 + 1 + 1 + 4 + 1 + encryptedData.size).apply {
+                                //头部开始标记
+                                put(0xFF.toByte())
+                                put(encryptionFlag)
+                                put(compressionFlag)
+                                put(lengthBuffer)
+                                //头部结束标记
+                                put(0xFF.toByte())
+                                put(encryptedData)
+                                flip()
+                            }
+
+                        //当前数据的大小
+                        val dataToWriteSize = dataToWrite.remaining()
+
+                        //如果当前数据的大小超过缓冲区设置的大小，则直接追加到主日志文件，不再经过缓冲区
+                        if (dataToWriteSize > cacheFileSize) {
+                            //追加数据到主日志文件
+                            appendByteBufferToCurrentFile(dataToWrite)
+                        } else {
+                            //如果缓冲区不足以写入当前数据，则先将缓存文件合入主文件后再进行写入
+                            if (dataToWriteSize > (cacheFileBuffer?.remaining() ?: 0)) {
+                                mergeFile()
+                            }
+
+                            //将数据写入缓冲区
+                            cacheFileBuffer?.put(dataToWrite)
+                        }
+
+                        shouldBreak = true
+                    }, onLockFailed = {
+                        Thread.sleep(500)
+                    })
+                }
+            }
+        }
+    }
+
+    /**
+     * 将缓冲区数据合入主文件
+     */
+    private fun mergeFile() {
+        try {
+            cacheFileBuffer?.let { buffer ->
+                //获取缓冲区有效数据长度
+                val dataSize = buffer.position()
+
+                //如果数据不为空，则将其合并到主文件
+                if (dataSize > 0) {
+                    //将缓冲区切换到读模式
+                    buffer.flip()
+
+                    //将缓冲区中有效数据提取出来
+                    val dataToWrite = ByteBuffer.allocate(dataSize)
+                    dataToWrite.put(buffer)
+                    dataToWrite.flip()
+
+                    //追加数据到主日志文件
+                    appendByteBufferToCurrentFile(dataToWrite)
+
+                    //清空缓存文件的缓冲区
+                    buffer.clear()
+
+                    //更新缓存文件上次写入位置
+                    updateCacheFileLastPosition()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * 追加数据到主日志文件
+     * @param data 要追加的数据
+     */
+    private fun appendByteBufferToCurrentFile(data: ByteBuffer) {
+        currentFileChannel?.write(data)
+
+        currentFileChannel?.force(true)
+
+        //如果主日志文件大小超出设置的最大值，则创建新的主文件
+        if ((currentFile?.length() ?: 0) > maxFileSize) {
+            fileNumber++
+            createNewLogFile()
+        }
+    }
+
+    /**
+     * 更新缓存文件上次写入位置
+     */
+    private fun updateCacheFileLastPosition() {
+        spUtil.putLong(
+            cacheFileLastPositionKey,
+            (cacheFileBuffer?.position() ?: 0).toLong(),
+            true
+        )
+    }
+
+    /**
      * 读取日志内容(需要在子线程中执行，并且只适合读取实时日志这类小数据的文件)
      * @param startTimeSeconds 起始的时间戳（秒）
      * @param endTimeSeconds 截止的时间戳（秒）
@@ -266,7 +394,7 @@ class ZLogUtil private constructor(private val builder: Builder) {
     ): List<Log> {
         val logEntries: MutableList<Log> = mutableListOf()
 
-        logLock.readLock().withLock({
+        logLock.readLock().runUnderLock(onLock = {
             val fileList = getLogFilesInRange(startTimeSeconds, endTimeSeconds)
 
             fileList.forEach { file ->
@@ -380,7 +508,7 @@ class ZLogUtil private constructor(private val builder: Builder) {
     ): Pair<Boolean, Boolean> {
         var result: Pair<Boolean, Boolean> = Pair(false, false)
 
-        logLock.readLock().withLock({
+        logLock.readLock().runUnderLock(onLock = {
             val fileList = getLogFilesInRange(startTimeSeconds, endTimeSeconds)
             result = if (fileList.isEmpty()) {
                 Pair(false, true)
@@ -459,177 +587,24 @@ class ZLogUtil private constructor(private val builder: Builder) {
      * @param log 要写入的日志数据
      */
     fun writeLog(log: Log) {
-        if (closeFlag == 1) {
-            return
-        }
-        logBuffer.offer(log.toByteArray())
-    }
-
-    /**
-     * 写入日志
-     */
-    private fun writeToCacheFileBuffer() {
-        try {
-            val shouldCompress = builder.compress
-            val shouldEncrypt = builder.secretKey.isNotBlank()
-
-            while (logBuffer.isNotEmpty()) {
-                val logData = logBuffer.poll()
-
-                if (logData == null || logData.isEmpty()) {
-                    continue
-                }
-
-                //压缩数据
-                val compressedData = if (shouldCompress) {
-                    GZIPUtil.compressBytes(logData)
-                } else {
-                    logData
-                }
-
-                //加密数据
-                val encryptedData = if (shouldEncrypt) {
-                    AESUtil.encryptBytes(compressedData, builder.secretKey)
-                } else {
-                    compressedData
-                }
-
-                //是否启用了加密
-                val encryptionFlag: Byte = if (shouldEncrypt) 1 else 0
-
-                //是否启用了压缩
-                val compressionFlag: Byte = if (shouldCompress) 1 else 0
-
-                //四个字节记录数据的长度
-                val lengthBuffer = ByteBuffer.allocate(4).putInt(encryptedData.size)
-                lengthBuffer.flip()
-
-                //创建一个缓冲区
-                val dataToWrite =
-                    ByteBuffer.allocate(1 + 1 + 1 + 4 + 1 + encryptedData.size).apply {
-                        //头部开始标记
-                        put(0xFF.toByte())
-                        put(encryptionFlag)
-                        put(compressionFlag)
-                        put(lengthBuffer)
-                        //头部结束标记
-                        put(0xFF.toByte())
-                        put(encryptedData)
-                        flip()
-                    }
-
-                //当前数据的大小
-                val dataToWriteSize = dataToWrite.remaining()
-
-                //如果当前数据的大小超过缓冲区设置的大小，则直接追加到主日志文件，不再经过缓冲区
-                if (dataToWriteSize > cacheFileSize) {
-                    //追加数据到主日志文件
-                    appendByteBufferToCurrentFile(dataToWrite)
-                } else {
-                    //如果缓冲区不足以写入当前数据，则先将缓存文件合入主文件后再进行写入
-                    if (dataToWriteSize > (cacheFileBuffer?.remaining() ?: 0)) {
-                        mergeFile()
-                    }
-
-                    //将数据写入缓冲区
-                    cacheFileBuffer?.put(dataToWrite)
-                }
-
-                //判断关闭标志位
-                if (closeFlag == 1) {
-                    closeFile()
-                    break
-                }
-            }
-
-            //将缓冲区数据写入缓存文件中并记录位置
-            cacheFileBuffer?.force()
-
-            updateCacheFileLastPosition()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    /**
-     * 将缓冲区数据合入主文件
-     */
-    private fun mergeFile() {
-        try {
-            cacheFileBuffer?.let { buffer ->
-                //获取缓冲区有效数据长度
-                val dataSize = buffer.position()
-
-                //如果数据不为空，则将其合并到主文件
-                if (dataSize > 0) {
-                    //将缓冲区切换到读模式
-                    buffer.flip()
-
-                    //将缓冲区中有效数据提取出来
-                    val dataToWrite = ByteBuffer.allocate(dataSize)
-                    dataToWrite.put(buffer)
-                    dataToWrite.flip()
-
-                    //追加数据到主日志文件
-                    appendByteBufferToCurrentFile(dataToWrite)
-
-                    //清空缓存文件的缓冲区
-                    buffer.clear()
-
-                    //更新缓存文件上次写入位置
-                    updateCacheFileLastPosition()
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    /**
-     * 追加数据到主日志文件
-     * @param data 要追加的数据
-     */
-    private fun appendByteBufferToCurrentFile(data: ByteBuffer) {
-        currentFileChannel?.write(data)
-
-        currentFileChannel?.force(true)
-
-        //如果主日志文件大小超出设置的最大值，则创建新的主文件
-        if ((currentFile?.length() ?: 0) > maxFileSize) {
-            fileNumber++
-            createNewLogFile()
-        }
-    }
-
-    /**
-     * 更新缓存文件上次写入位置
-     */
-    private fun updateCacheFileLastPosition() {
-        spUtil.putLong(
-            cacheFileLastPositionKey,
-            (cacheFileBuffer?.position() ?: 0).toLong(),
-            true
-        )
+        writeChannel.trySend(log.toByteArray())
     }
 
     /**
      * 释放资源
      */
     fun close() {
-        writeToCacheFileBufferExecutor.shutdown()
+        coroutineScope.cancel()
         mergeCacheFileExecutor.shutdown()
 
-        //设置关闭标志位
-        closeFlag = 1
+        closeFile()
 
-        //如果没有写任务正在执行，则立即关闭
-        logLock.writeLock().withLock({
-            closeFile()
-        })
+        cacheFile?.close()
+        cacheFile = null
     }
 
     /**
-     * 关闭文件
+     * 关闭主文件
      */
     private fun closeFile() {
         try {
@@ -638,11 +613,6 @@ class ZLogUtil private constructor(private val builder: Builder) {
 
             currentFile?.close()
             currentFile = null
-
-            if (closeFlag == 1) {
-                cacheFile?.close()
-                cacheFile = null
-            }
         } catch (e: Exception) {
             e.printStackTrace()
         }

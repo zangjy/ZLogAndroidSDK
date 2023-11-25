@@ -134,20 +134,35 @@ object AESUtil {
         }
     }
 
+//    /**
+//     * 处理密钥长度，确保它是16、24或32字节长
+//     * @param key 原始密钥
+//     * @return 符合AES密钥长度要求的密钥
+//     */
+//    private fun adjustKeySize(key: String): String {
+//        val validKeySizes = listOf(16, 24, 32)
+//        val keyLength = key.length
+//
+//        return when {
+//            validKeySizes.contains(keyLength) -> key
+//            keyLength < 16 -> key.padEnd(16, '0') // 填充0
+//            keyLength < 24 -> key.padEnd(24, '0') // 填充0
+//            else -> key.substring(0, 32) // 截断为32字节
+//        }
+//    }
+
     /**
-     * 处理密钥长度，确保它是16、24或32字节长
+     * 处理密钥长度，确保它是16字节长
      * @param key 原始密钥
-     * @return 符合AES密钥长度要求的密钥
+     * @return 符合AES128密钥长度要求的密钥
      */
     private fun adjustKeySize(key: String): String {
-        val validKeySizes = listOf(16, 24, 32)
         val keyLength = key.length
 
         return when {
-            validKeySizes.contains(keyLength) -> key
+            keyLength == 16 -> key
             keyLength < 16 -> key.padEnd(16, '0') // 填充0
-            keyLength < 24 -> key.padEnd(24, '0') // 填充0
-            else -> key.substring(0, 32) // 截断为32字节
+            else -> key.substring(0, 16) // 截断为16字节
         }
     }
 
