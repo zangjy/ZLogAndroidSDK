@@ -41,19 +41,4 @@ object SPConstant {
      * 默认的SP文件名
      */
     const val DEFAULT_SP_NAME = "zlog_conf"
-
-    /**
-     * 日志缓存文件最后写入的位置SP文件名
-     */
-    const val CACHE_FILE_LAST_POSITION_SP_NAME = "zlog_cache_conf"
-
-    /**
-     * 日志缓存文件最后写入的位置
-     */
-    const val CACHE_FILE_LAST_POSITION_KEY = "CACHE_FILE_LAST_POSITION_KEY"
-
-    /**
-     * 临时日志缓存文件最后写入的位置
-     */
-    const val TMP_CACHE_FILE_LAST_POSITION_KEY = "TMP_CACHE_FILE_LAST_POSITION_KEY"
 }

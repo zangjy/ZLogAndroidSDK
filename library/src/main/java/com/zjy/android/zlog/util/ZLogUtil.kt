@@ -1,6 +1,5 @@
 package com.zjy.android.zlog.util
 
-import com.zjy.android.zlog.constant.SPConstant
 import com.zjy.android.zlog.proto.LogOuterClass.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,13 +27,6 @@ import java.util.concurrent.TimeUnit
  * 描述：
  */
 class ZLogUtil private constructor(private val builder: Builder) {
-    /**
-     * SharedPreferences实例
-     */
-    private val spUtil by lazy {
-        SPUtil.getInstance(SPConstant.CACHE_FILE_LAST_POSITION_SP_NAME)
-    }
-
     //<editor-fold desc="基础配置">
     /**
      * 日志文件的根目录
@@ -83,12 +75,6 @@ class ZLogUtil private constructor(private val builder: Builder) {
 
     //<editor-fold desc="缓存文件相关">
     /**
-     * 记录缓存文件上次写入位置的Key
-     */
-    private val cacheFileLastPositionKey =
-        if (builder.isOfflineLog) SPConstant.CACHE_FILE_LAST_POSITION_KEY else SPConstant.TMP_CACHE_FILE_LAST_POSITION_KEY
-
-    /**
      * 缓存文件
      */
     private var cacheFile: RandomAccessFile? = null
@@ -131,6 +117,11 @@ class ZLogUtil private constructor(private val builder: Builder) {
      * 通用格式化日期
      */
     private val dateFormat = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
+
+    /**
+     * 关闭标记
+     */
+    private var closeFlag = false
 
     init {
         createBaseDir()
@@ -196,14 +187,6 @@ class ZLogUtil private constructor(private val builder: Builder) {
             0,
             cacheFileSize.toLong()
         )
-
-        //获取缓存文件最后写入的位置
-        val cacheFileCurPos = spUtil.getLong(cacheFileLastPositionKey, 0)
-
-        //设置开始写入的位置
-        if (cacheFileCurPos <= cacheFileSize) {
-            cacheFileBuffer!!.position(cacheFileCurPos.toInt())
-        }
     }
 
     /**
@@ -248,9 +231,9 @@ class ZLogUtil private constructor(private val builder: Builder) {
     private fun startWriting() {
         coroutineScope.launch {
             for (logData in writeChannel) {
-                var shouldBreak = false
+                var writeSuccess = false
 
-                while (!shouldBreak) {
+                while (!writeSuccess) {
                     logLock.writeLock().runUnderLock(onLock = {
                         val shouldCompress = builder.compress
                         val shouldEncrypt = builder.secretKey.isNotBlank()
@@ -310,12 +293,20 @@ class ZLogUtil private constructor(private val builder: Builder) {
                             cacheFileBuffer?.put(dataToWrite)
                         }
 
-                        shouldBreak = true
+                        writeSuccess = true
                     }, onLockFailed = {
                         Thread.sleep(500)
                     })
                 }
+
+                //如果已经被标记为关闭，则不再读取并写日志
+                if (closeFlag) {
+                    break
+                }
             }
+
+            //释放资源
+            close()
         }
     }
 
@@ -343,9 +334,6 @@ class ZLogUtil private constructor(private val builder: Builder) {
 
                     //清空缓存文件的缓冲区
                     buffer.clear()
-
-                    //更新缓存文件上次写入位置
-                    updateCacheFileLastPosition()
                 }
             }
         } catch (e: Exception) {
@@ -358,26 +346,19 @@ class ZLogUtil private constructor(private val builder: Builder) {
      * @param data 要追加的数据
      */
     private fun appendByteBufferToCurrentFile(data: ByteBuffer) {
-        currentFileChannel?.write(data)
+        try {
+            currentFileChannel?.write(data)
 
-        currentFileChannel?.force(true)
+            currentFileChannel?.force(true)
 
-        //如果主日志文件大小超出设置的最大值，则创建新的主文件
-        if ((currentFile?.length() ?: 0) > maxFileSize) {
-            fileNumber++
-            createNewLogFile()
+            //如果主日志文件大小超出设置的最大值，则创建新的主文件
+            if ((currentFile?.length() ?: 0) > maxFileSize) {
+                fileNumber++
+                createNewLogFile()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-    }
-
-    /**
-     * 更新缓存文件上次写入位置
-     */
-    private fun updateCacheFileLastPosition() {
-        spUtil.putLong(
-            cacheFileLastPositionKey,
-            (cacheFileBuffer?.position() ?: 0).toLong(),
-            true
-        )
     }
 
     /**
@@ -587,6 +568,9 @@ class ZLogUtil private constructor(private val builder: Builder) {
      * @param log 要写入的日志数据
      */
     fun writeLog(log: Log) {
+        if (closeFlag) {
+            return
+        }
         writeChannel.trySend(log.toByteArray())
     }
 
@@ -594,13 +578,22 @@ class ZLogUtil private constructor(private val builder: Builder) {
      * 释放资源
      */
     fun close() {
-        coroutineScope.cancel()
-        mergeCacheFileExecutor.shutdown()
+        logLock.writeLock().runUnderLock(onLock = {
+            try {
+                writeChannel.close()
+                coroutineScope.cancel()
+                mergeCacheFileExecutor.shutdown()
 
-        closeFile()
+                closeFile()
 
-        cacheFile?.close()
-        cacheFile = null
+                cacheFile?.close()
+                cacheFile = null
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }, onLockFailed = {
+            closeFlag = true
+        })
     }
 
     /**
