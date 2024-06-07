@@ -22,6 +22,9 @@
             android:exported="true" />
         <activity
             android:name=".activity.ZLogTestActivity"
+            android:exported="true" />
+        <activity
+            android:name=".activity.ZLogTest2Activity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

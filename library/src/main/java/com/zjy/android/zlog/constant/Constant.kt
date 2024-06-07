@@ -1,12 +1,19 @@
 package com.zjy.android.zlog.constant
 
 /**
- * 文件名：SPConstant
+ * 文件名：Constant
  * 创建者：ZangJiaYu
  * 创建日期：2023/9/14
  * 描述：
  */
-object SPConstant {
+object Constant {
+
+    //<editor-fold desc="zlog_conf.xml">
+    /**
+     * 默认的MMKV
+     */
+    const val DEFAULT_MMKV_NAME = "zlog_conf"
+
     /**
      * 应用ID
      */
@@ -31,14 +38,22 @@ object SPConstant {
      * 附加字段，可以用此字段记录用户身份等信息
      */
     const val IDENTIFY_VALUE_KEY = "IDENTIFY_VALUE_KEY"
+    //</editor-fold>
+
+    //<editor-fold desc="zlog_w_pos_conf.xml">
+    /**
+     * 记录写入位置的MMKV
+     */
+    const val W_POS_MMKV_NAME = "zlog_w_pos_conf"
+
+    /**
+     * 记录上次写数据的位置
+     */
+    const val CACHE_FILE_LAST_WRITE_POS_KEY = "CACHE_FILE_LAST_WRITE_POS_KEY"
+    //</editor-fold>
 
     /**
      * 服务端交互成功的标志
      */
     const val SUCCESS_CODE = "0000"
-
-    /**
-     * 默认的SP文件名
-     */
-    const val DEFAULT_SP_NAME = "zlog_conf"
 }

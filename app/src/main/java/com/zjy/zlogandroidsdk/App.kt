@@ -13,7 +13,7 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         ZLog.preInit(this)
-        ZLog.init("http://192.168.2.188:20000/", "709421174920052736")
+        ZLog.init("http://192.168.2.188:20000/", "709421174920052736", true)
         ZLog.changeIdentifyValue("155****0332")
     }
 

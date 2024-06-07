@@ -1,6 +1,7 @@
 package com.zjy.android.zlog.interceptor
 
-import com.zjy.android.zlog.constant.SPConstant
+import com.tencent.mmkv.MMKV
+import com.zjy.android.zlog.constant.Constant
 import com.zjy.android.zlog.net.ApiPaths
 import com.zjy.android.zlog.util.AESUtil
 import com.zjy.android.zlog.util.App
@@ -23,12 +24,25 @@ import java.io.IOException
  */
 class ZLogNetInterceptor : Interceptor {
 
+    /**
+     * 默认的MMKV
+     */
+    private val defaultMMKV by lazy {
+        MMKV.mmkvWithID(Constant.DEFAULT_MMKV_NAME)
+    }
+
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
         //添加全局Header
         request = request.newBuilder()
-            .addHeader("TMP_SESSION_ID", App.getSp().getString(SPConstant.TMP_SESSION_ID_KEY))
-            .addHeader("SESSION_ID", App.getSp().getString(SPConstant.SESSION_ID_KEY))
+            .addHeader(
+                "TMP_SESSION_ID",
+                defaultMMKV.decodeString(Constant.TMP_SESSION_ID_KEY) ?: ""
+            )
+            .addHeader(
+                "SESSION_ID",
+                defaultMMKV.decodeString(Constant.SESSION_ID_KEY) ?: ""
+            )
             .build()
         //替换服务端地址
         request = replaceUrl(request)
@@ -102,7 +116,7 @@ class ZLogNetInterceptor : Interceptor {
      * @return 加密后的请求体 [RequestBody]
      */
     private fun compressAndEncryptRequestBody(requestBody: RequestBody?): RequestBody? {
-        val sharedSecret = App.getSp().getString(SPConstant.SHARED_SECRET_KEY)
+        val sharedSecret = defaultMMKV.decodeString(Constant.SHARED_SECRET_KEY) ?: ""
 
         if (sharedSecret.isEmpty() || requestBody == null) {
             return requestBody
@@ -140,7 +154,7 @@ class ZLogNetInterceptor : Interceptor {
      * @return 解密和解压缩后的响应体 [ResponseBody]
      */
     private fun deCompressAndDecryptResponseBody(responseBody: ResponseBody?): ResponseBody? {
-        val sharedSecret = App.getSp().getString(SPConstant.SHARED_SECRET_KEY)
+        val sharedSecret = defaultMMKV.decodeString(Constant.SHARED_SECRET_KEY) ?: ""
 
         if (sharedSecret.isEmpty() || responseBody == null) {
             return responseBody

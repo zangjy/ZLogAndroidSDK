@@ -23,13 +23,6 @@ object App {
     private var initSuccess = false
 
     /**
-     * SharedPreferences实例
-     */
-    private val spUtil by lazy {
-        SPUtil.getInstance()
-    }
-
-    /**
      * 服务端地址
      */
     private var hostUrl: String = ""
@@ -38,6 +31,11 @@ object App {
      * 应用ID
      */
     private var appId: String = ""
+
+    /**
+     * 是否将日志输出到控制台
+     */
+    private var enableConsole = false
 
     /**
      * 全局的ViewModel
@@ -70,11 +68,13 @@ object App {
      * SDK初始化完后调用本方法，写入日志时会读取设备信息
      * @param hostUrl 服务端地址
      * @param appId 应用ID
+     * @param enableConsole 是否输出日志
      */
-    fun init(hostUrl: String, appId: String) {
+    fun init(hostUrl: String, appId: String, enableConsole: Boolean) {
         initSuccess = true
         this.hostUrl = hostUrl
         this.appId = appId
+        this.enableConsole = enableConsole
     }
 
     /**
@@ -82,12 +82,6 @@ object App {
      * @return 返回状态
      */
     fun isInitSuccess() = initSuccess
-
-    /**
-     * 获取SharedPreferences实例
-     * @return SharedPreferences实例
-     */
-    fun getSp() = spUtil
 
     /**
      * 获取服务端地址
@@ -100,6 +94,12 @@ object App {
      * @return 返回服务端地址
      */
     fun getAppId() = appId
+
+    /**
+     * 是否将日志输出到控制台
+     * @return 返回是否将日志输出到控制台
+     */
+    fun enableConsole() = enableConsole
 
     /**
      * 获取全局ViewModel

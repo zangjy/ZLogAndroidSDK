@@ -1,8 +1,9 @@
 package com.zjy.android.zlog.viewmodel
 
 import androidx.lifecycle.ViewModel
+import com.tencent.mmkv.MMKV
 import com.zjy.android.zlog.bean.PutOnlineLogReqBean
-import com.zjy.android.zlog.constant.SPConstant
+import com.zjy.android.zlog.constant.Constant
 import com.zjy.android.zlog.interceptor.ZLogNetInterceptor
 import com.zjy.android.zlog.model.ExchangePubKeyModel
 import com.zjy.android.zlog.model.GetTaskModel
@@ -11,7 +12,7 @@ import com.zjy.android.zlog.util.AESUtil
 import com.zjy.android.zlog.util.App
 import com.zjy.android.zlog.util.DeviceUtil
 import com.zjy.android.zlog.util.ECDHUtil
-import com.zjy.xbase.ext.doAsync
+import com.zjy.xbase.ext.request
 import com.zjy.xbase.net.RetrofitClient
 import kotlinx.coroutines.Job
 import okhttp3.MediaType
@@ -28,10 +29,9 @@ import java.util.concurrent.TimeUnit
  * 描述：
  */
 class ZLogGlobalVM : ViewModel() {
+
     companion object {
-        /**
-         * OkHttpClient
-         */
+
         private val defaultOkHttpClient: OkHttpClient by lazy {
             OkHttpClient.Builder()
                 .addInterceptor(ZLogNetInterceptor())
@@ -41,16 +41,20 @@ class ZLogGlobalVM : ViewModel() {
                 .build()
         }
 
-        /**
-         * 网络请求的实例
-         */
         val client: Api by lazy {
             RetrofitClient.getService(defaultOkHttpClient, Api.TEST_BASE_URL, Api::class.java)
         }
     }
 
     /**
-     * 网络请求列表
+     * 默认的MMKV
+     */
+    private val defaultMMKV by lazy {
+        MMKV.mmkvWithID(Constant.DEFAULT_MMKV_NAME)
+    }
+
+    /**
+     * 网络请求任务列表
      */
     private val jobList: MutableList<Job> = mutableListOf()
 
@@ -58,46 +62,36 @@ class ZLogGlobalVM : ViewModel() {
      * 重新和服务端交换公钥后计算共享密钥，然后进行设备注册，获得SessionId
      */
     fun getSessionId() {
-        //清除本地数据
-        App.getSp().clear(true)
-        //本地密钥对
+        //生成本地密钥对
         val keyPair = ECDHUtil.generateKeyPair()
         //和服务端交换后获取TmpSessionId和ServerPubKey
-        exchangePubKey(keyPair.first) { exchangePubKeyModel ->
-            if (exchangePubKeyModel.isSuccessAndNotEmpty()) {
-                //计算共享密钥
-                val sharedSecret = ECDHUtil.generateSharedSecret(
-                    exchangePubKeyModel.serverPubKey, keyPair.second
-                )
-                //如果成功，则验证一下共享密钥
-                if (sharedSecret.isNotEmpty()) {
-                    //验证共享密钥
-                    verifySharedKey(
-                        exchangePubKeyModel.tmpSessionId,
-                        sharedSecret,
-                        onSuccess = {
-                            //保存共享密钥到本地
-                            App.getSp().putString(
-                                SPConstant.SHARED_SECRET_KEY,
-                                sharedSecret,
-                                true
-                            )
-                            //保存TmpSessionId到本地
-                            App.getSp().putString(
-                                SPConstant.TMP_SESSION_ID_KEY,
-                                exchangePubKeyModel.tmpSessionId,
-                                true
-                            )
-                            //进行设备注册
-                            deviceRegister { sessionId ->
-                                //保存SessionId到本地
-                                App.getSp().putString(SPConstant.SESSION_ID_KEY, sessionId, true)
-                            }
-                        }
+        exchangePubKey(keyPair.first, onSuccess = { exchangePubKeyModel ->
+            //计算共享密钥
+            val sharedSecret = ECDHUtil.generateSharedSecret(
+                exchangePubKeyModel.serverPubKey, keyPair.second
+            )
+            //如果成功，则验证一下共享密钥
+            if (sharedSecret.isNotEmpty()) {
+                //验证共享密钥
+                verifySharedKey(exchangePubKeyModel.tmpSessionId, sharedSecret, onSuccess = {
+                    //保存共享密钥到本地
+                    defaultMMKV.encode(
+                        Constant.SHARED_SECRET_KEY,
+                        sharedSecret
                     )
-                }
+                    //保存TmpSessionId到本地
+                    defaultMMKV.encode(
+                        Constant.TMP_SESSION_ID_KEY,
+                        exchangePubKeyModel.tmpSessionId
+                    )
+                    //进行设备注册
+                    deviceRegister { sessionId ->
+                        //保存SessionId到本地
+                        defaultMMKV.encode(Constant.SESSION_ID_KEY, sessionId)
+                    }
+                })
             }
-        }
+        })
     }
 
     /**
@@ -107,14 +101,18 @@ class ZLogGlobalVM : ViewModel() {
      */
     private fun exchangePubKey(
         clientPubKey: String,
-        onSuccess: (model: ExchangePubKeyModel) -> Unit
-    ) = jobList.add(
-        doAsync({
-            client.exchangePubKey(mutableMapOf("client_pub_key" to clientPubKey))
-        }, onSuccess = {
-            onSuccess(it)
-        })
-    )
+        onSuccess: (model: ExchangePubKeyModel) -> Unit,
+    ) {
+        jobList.add(
+            request({
+                client.exchangePubKey(mutableMapOf("client_pub_key" to clientPubKey))
+            }, onSuccess = {
+                if (it.serverPubKey.isNotEmpty() && it.tmpSessionId.isNotEmpty()) {
+                    onSuccess(it)
+                }
+            })
+        )
+    }
 
     /**
      * 共享密钥验证
@@ -127,11 +125,11 @@ class ZLogGlobalVM : ViewModel() {
         tmpSessionId: String,
         sharedSecret: String,
         onSuccess: () -> Unit = {},
-        onError: () -> Unit = {}
+        onError: () -> Unit = {},
     ) {
         val verifyData = "测试数据"
         jobList.add(
-            doAsync({
+            request({
                 client.verifySharedKey(
                     mutableMapOf(
                         "tmp_session_id" to tmpSessionId,
@@ -139,7 +137,7 @@ class ZLogGlobalVM : ViewModel() {
                     )
                 )
             }, onSuccess = {
-                if (it.isSuccessAndNotEmpty() && it.decryptData == verifyData) {
+                if (it.decryptData == verifyData) {
                     onSuccess()
                 } else {
                     onError()
@@ -150,83 +148,81 @@ class ZLogGlobalVM : ViewModel() {
 
     /**
      * 设备注册
+     * @param onSuccess 成功时的回调
      */
-    private fun deviceRegister(
-        onSuccess: (sessionId: String) -> Unit
-    ) = jobList.add(
-        doAsync({
-            client.deviceRegister(
-                mutableMapOf(
-                    "app_id" to App.getAppId(),
-                    "device_type" to 1,
-                    "device_name" to "${DeviceUtil.getManufacturer()} ${DeviceUtil.getModel()}",
-                    "device_id" to DeviceUtil.getUniqueDeviceId()
+    private fun deviceRegister(onSuccess: (sessionId: String) -> Unit) {
+        jobList.add(
+            request({
+                client.deviceRegister(
+                    mutableMapOf(
+                        "app_id" to App.getAppId(),
+                        "device_type" to 1,
+                        "device_name" to "${DeviceUtil.getManufacturer()} ${DeviceUtil.getModel()}",
+                        "device_id" to DeviceUtil.getUniqueDeviceId()
+                    )
                 )
-            )
-        }, onSuccess = {
-            if (it.sessionId.isNotEmpty()) {
-                onSuccess(it.sessionId)
-            }
-        })
-    )
+            }, onSuccess = {
+                if (it.sessionId.isNotEmpty()) {
+                    onSuccess(it.sessionId)
+                }
+            })
+        )
+    }
 
     /**
      * 上传实时日志
      * @param reqBean 日志数据
+     * @param onComplete 完成的回调
      */
-    fun putOnlineLog(reqBean: PutOnlineLogReqBean) = jobList.add(
-        doAsync({
-            client.putOnlineLog(reqBean)
-        }, onSuccess = {
-
-        })
-    )
+    fun putOnlineLog(reqBean: PutOnlineLogReqBean, onComplete: () -> Unit) {
+        jobList.add(
+            request({
+                client.putOnlineLog(reqBean)
+            }, onComplete = {
+                onComplete()
+            })
+        )
+    }
 
     /**
      * 获取任务列表
+     * @param taskListCallBack 回调任务列表
      */
-    fun getTask(
-        onSuccess: (data: MutableList<GetTaskModel.GetTaskInfo>) -> Unit
-    ) = jobList.add(
-        doAsync({
-            client.getTask()
-        }, onSuccess = {
-            if (it.data.isNotEmpty()) {
-                onSuccess(it.data)
-            }
-        })
-    )
+    fun getTask(taskListCallBack: (data: MutableList<GetTaskModel.GetTaskInfo>) -> Unit) {
+        jobList.add(
+            request({
+                client.getTask()
+            }, onSuccess = {
+                if (it.data.isNotEmpty()) {
+                    taskListCallBack.invoke(it.data)
+                }
+            })
+        )
+    }
 
     /**
      * 上传日志文件
      * @param zipFile 压缩后的日志文件
-     * @param onSuccess 成功的回调
      * @param onComplete 完成的回调
      */
-    fun uploadLogFile(
-        zipFile: File,
-        onSuccess: () -> Unit,
-        onComplete: () -> Unit,
-    ) = jobList.add(
-        doAsync({
-            client.uploadLogFile(
-                MultipartBody.Part.createFormData(
-                    "file",
-                    zipFile.name,
-                    RequestBody.create(
-                        MediaType.parse("multipart/form-data"),
-                        zipFile
+    fun uploadLogFile(zipFile: File, onComplete: () -> Unit) {
+        jobList.add(
+            request({
+                client.uploadLogFile(
+                    MultipartBody.Part.createFormData(
+                        "file",
+                        zipFile.name,
+                        RequestBody.create(
+                            MediaType.parse("multipart/form-data"),
+                            zipFile
+                        )
                     )
                 )
-            )
-        }, onSuccess = {
-            if (it.status == SPConstant.SUCCESS_CODE) {
-                onSuccess()
-            }
-        }, onComplete = {
-            onComplete()
-        })
-    )
+            }, onComplete = {
+                onComplete.invoke()
+            })
+        )
+    }
 
     /**
      * 日志无法上传时的反馈
@@ -234,24 +230,20 @@ class ZLogGlobalVM : ViewModel() {
      * @param msg 失败的原因
      * @param onComplete 完成时的回调
      */
-    fun uploadLogFileErrCallBack(
-        taskId: String,
-        msg: String,
-        onComplete: () -> Unit
-    ) = jobList.add(
-        doAsync({
-            client.uploadLogFileErrCallBack(
-                mutableMapOf(
-                    "task_id" to taskId,
-                    "msg" to msg
+    fun uploadLogFileErrCallBack(taskId: String, msg: String, onComplete: () -> Unit) {
+        jobList.add(
+            request({
+                client.uploadLogFileErrCallBack(
+                    mutableMapOf(
+                        "task_id" to taskId,
+                        "msg" to msg
+                    )
                 )
-            )
-        }, onSuccess = {
-
-        }, onComplete = {
-            onComplete()
-        })
-    )
+            }, onComplete = {
+                onComplete.invoke()
+            })
+        )
+    }
 
     /**
      * 结束所有任务

@@ -1,8 +1,10 @@
 package com.zjy.android.zlog
 
 import android.app.Application
+import com.tencent.mmkv.MMKV
 import com.zjy.android.zlog.bean.PutOnlineLogReqBean
-import com.zjy.android.zlog.constant.SPConstant
+import com.zjy.android.zlog.constant.Constant
+import com.zjy.android.zlog.ext.printToConsole
 import com.zjy.android.zlog.model.GetTaskModel
 import com.zjy.android.zlog.proto.LogOuterClass.Log
 import com.zjy.android.zlog.util.App
@@ -24,6 +26,7 @@ import java.util.concurrent.atomic.AtomicLong
  * 描述：
  */
 object ZLog {
+
     /**
      * 延迟第一次执行的时间
      */
@@ -42,7 +45,7 @@ object ZLog {
      * 上传实时任务的时间间隔（毫秒）
      */
     private val uploadLogMillis by lazy {
-        60 * 1000L
+        30 * 1000L
     }
 
     /**
@@ -63,7 +66,7 @@ object ZLog {
      * 定时查询回捞任务的时间间隔（毫秒）
      */
     private val getTaskMillis by lazy {
-        60 * 1000L
+        30 * 1000L
     }
 
     /**
@@ -71,6 +74,13 @@ object ZLog {
      */
     private val getTaskExecutor by lazy {
         Executors.newSingleThreadScheduledExecutor()
+    }
+
+    /**
+     * 默认的MMKV
+     */
+    private val defaultMMKV by lazy {
+        MMKV.mmkvWithID(Constant.DEFAULT_MMKV_NAME)
     }
 
     /**
@@ -104,9 +114,8 @@ object ZLog {
             .isOfflineLog(true) //设置是否离线日志
             .cacheFileSize(64) //设置缓存文件大小，单位为KB
             .maxFileSize(50) //设置单个日志文件最大大小，单位为MB
-            .mergeCacheFileSeconds(30) //设置合并缓存文件到主文件的时间间隔，单位为秒
             .compress(true) //设置是否压缩日志
-            .secretKey(App.getSp().getString(SPConstant.SHARED_SECRET_KEY)) //设置加密密钥
+            .secretKey(defaultMMKV.decodeString(Constant.SHARED_SECRET_KEY) ?: "") //设置加密密钥
             .build()
     }
 
@@ -120,9 +129,8 @@ object ZLog {
             .isOfflineLog(false) //设置是否离线日志
             .cacheFileSize(64) //设置缓存文件大小，单位为KB
             .maxFileSize(50) //单文件大小，单位为MB
-            .mergeCacheFileSeconds(30) //设置合并缓存文件到主文件的时间间隔，单位为秒
             .compress(true) //设置是否压缩日志
-            .secretKey(App.getSp().getString(SPConstant.SHARED_SECRET_KEY)) //设置加密密钥
+            .secretKey(defaultMMKV.decodeString(Constant.SHARED_SECRET_KEY) ?: "") //设置加密密钥
             .build()
     }
 
@@ -137,45 +145,45 @@ object ZLog {
      */
     fun preInit(application: Application) {
         App.setApplication(application)
-        identify = App.getSp().getString(SPConstant.IDENTIFY_VALUE_KEY)
+        MMKV.initialize(application)
+        identify = defaultMMKV.decodeString(Constant.IDENTIFY_VALUE_KEY) ?: ""
     }
 
     /**
      * 直接使用 [ZLog] 初始化，则不需要调用 [App.init]
      * @param hostUrl 服务端地址
      * @param appId 应用ID
+     * @param enableConsole 是否将日志输出到控制台
      */
-    fun init(hostUrl: String, appId: String) {
-        App.init(hostUrl, appId)
+    fun init(hostUrl: String, appId: String, enableConsole: Boolean) {
+        App.init(hostUrl, appId, enableConsole)
 
-        //如果应用ID和上次不一致，则重新进行设备注册
-        if (App.getSp().getString(SPConstant.APP_ID_KEY) != appId) {
-            //清除本地数据
-            App.getSp().clear(true)
+        //如果应用ID和上次不一致时清除默认SP文件内的数据
+        defaultMMKV.run {
+            if ((decodeString(Constant.APP_ID_KEY) ?: "") != appId) {
+                clearAll()
+                encode(Constant.APP_ID_KEY, appId)
+            }
         }
 
-        val info = getRegisterInfo()
-        //如果SessionId和共享密钥均存在，则和服务端进行验证密钥操作，否则进行设备注册
-        if (info.third) {
-            //验证密钥
-            App.getGlobalVM().verifySharedKey(info.first, info.second, onError = {
-                //验证失败，重新获取SessionId
+        //SessionId和共享密钥均存在时和服务端进行交互验证密钥，验证失败重新进行设备注册
+        getRegisterInfo().let {
+            if (it.third) {
+                App.getGlobalVM().verifySharedKey(it.first, it.second, onError = {
+                    App.getGlobalVM().getSessionId()
+                })
+            } else {
                 App.getGlobalVM().getSessionId()
-            })
-        } else {
-            App.getGlobalVM().getSessionId()
+            }
         }
 
-        //记录应用ID
-        App.getSp().putString(SPConstant.APP_ID_KEY, appId)
-
-        //定时上传实时日志(60s执行一次)
-        uploadLogExecutor.scheduleAtFixedRate({
+        //定时上传实时日志(30s执行一次)
+        uploadLogExecutor.scheduleWithFixedDelay({
             putOnlineLog()
         }, initialDelayMillis, uploadLogMillis, TimeUnit.MILLISECONDS)
 
-        //定时查询日志回捞任务(60s执行一次)
-        getTaskExecutor.scheduleAtFixedRate({
+        //定时查询日志回捞任务(30s执行一次)
+        getTaskExecutor.scheduleWithFixedDelay({
             getLogTask()
         }, initialDelayMillis, getTaskMillis, TimeUnit.MILLISECONDS)
     }
@@ -187,11 +195,17 @@ object ZLog {
      */
     fun writeOfflineLog(
         level: Log.Level,
-        msg: String
+        msg: String,
     ) {
         val (className, lineNumber) = getCallingMethodInfo()
 
-        offlineLog.writeLog(serializeLog(level, "$className:$lineNumber", msg))
+        val serializeLog = serializeLog(level, "$className:$lineNumber", msg)
+
+        if (App.enableConsole()) {
+            serializeLog.printToConsole()
+        }
+
+        offlineLog.writeLog(serializeLog)
     }
 
     /**
@@ -203,11 +217,15 @@ object ZLog {
     fun writeOnlineLog(
         level: Log.Level,
         msg: String,
-        syncDataToOfflineLog: Boolean = true
+        syncDataToOfflineLog: Boolean = true,
     ) {
         val (className, lineNumber) = getCallingMethodInfo()
 
         val serializeLog = serializeLog(level, "$className:$lineNumber", msg)
+
+        if (App.enableConsole()) {
+            serializeLog.printToConsole()
+        }
 
         onlineLog.writeLog(serializeLog)
 
@@ -290,31 +308,43 @@ object ZLog {
      */
     private fun putOnlineLog() {
         ThreadUtil.runOnBackgroundThread(task = {
-            uploadLogLock.lock().runUnderLock(onLock = {
-                val logList = onlineLog.readLog(System.currentTimeMillis() / 1000)
+            uploadLogLock.runUnderLock(onLock = {
+                val latch = CountDownLatch(1)
 
-                if (getRegisterInfo().third) {
-                    val reqBean = PutOnlineLogReqBean()
+                onlineLog.readLog(successCallBack = { logList ->
+                    if (getRegisterInfo().third) {
+                        val reqBean = PutOnlineLogReqBean()
 
-                    for (log in logList) {
-                        reqBean.data.add(
-                            PutOnlineLogReqBean.PutOnlineLogBean(
-                                sequence = log.sequence,
-                                system_version = log.systemVersion,
-                                app_version = log.appVersion,
-                                time_stamp = log.timestamp,
-                                log_level = log.logLevelValue,
-                                identify = log.identify,
-                                tag = log.tag,
-                                msg = log.msg
+                        for (log in logList) {
+                            reqBean.data.add(
+                                PutOnlineLogReqBean.PutOnlineLogBean(
+                                    sequence = log.sequence,
+                                    system_version = log.systemVersion,
+                                    app_version = log.appVersion,
+                                    time_stamp = log.timestamp,
+                                    log_level = log.logLevelValue,
+                                    identify = log.identify,
+                                    tag = log.tag,
+                                    msg = log.msg
+                                )
                             )
-                        )
-                    }
+                        }
 
-                    if (reqBean.data.isNotEmpty()) {
-                        App.getGlobalVM().putOnlineLog(reqBean)
+                        if (reqBean.data.isNotEmpty()) {
+                            App.getGlobalVM().putOnlineLog(reqBean, onComplete = {
+                                latch.countDown()
+                            })
+                        } else {
+                            latch.countDown()
+                        }
+                    } else {
+                        latch.countDown()
                     }
-                }
+                }, errorCallBack = {
+                    latch.countDown()
+                })
+
+                latch.await()
             })
         })
     }
@@ -336,45 +366,51 @@ object ZLog {
      */
     private fun uploadLogFile(taskInfo: GetTaskModel.GetTaskInfo) {
         ThreadUtil.runOnBackgroundThread(task = {
-            uploadLogFileLock.lock().runUnderLock(onLock = {
+            uploadLogFileLock.runUnderLock(onLock = {
                 val latch = CountDownLatch(1)
 
                 //保存Zip的位置
                 val filePath =
                     App.getApplication().cacheDir.absolutePath + File.separator + taskInfo.taskId + ".zip"
 
-                val (state, fileListIsEmpty) = offlineLog.zipLogFiles(
+                offlineLog.zipLogFiles(
                     taskInfo.startTime,
                     taskInfo.endTime,
-                    filePath
+                    filePath,
+                    successCallBack = { isSuccess, noFile ->
+                        if (isSuccess) {
+                            //待上传的日志文件
+                            val zipFile = File(filePath)
+
+                            //上传文件
+                            App.getGlobalVM().uploadLogFile(
+                                zipFile = zipFile,
+                                onComplete = {
+                                    //删除临时文件
+                                    if (zipFile.exists()) {
+                                        zipFile.delete()
+                                    }
+                                    latch.countDown()
+                                }
+                            )
+                        } else if (noFile) {
+                            //反馈问题给服务端
+                            App.getGlobalVM().uploadLogFileErrCallBack(
+                                taskId = taskInfo.taskId,
+                                msg = "对应时间段的日志文件列表为空",
+                                onComplete = {
+                                    latch.countDown()
+                                }
+                            )
+                        } else {
+                            latch.countDown()
+                        }
+                    },
+                    errorCallBack = {
+                        latch.countDown()
+                    }
                 )
 
-                if (state) {
-                    //待上传的日志文件
-                    val zipFile = File(filePath)
-
-                    //上传文件
-                    App.getGlobalVM().uploadLogFile(
-                        zipFile = zipFile,
-                        onSuccess = {
-                            //删除临时文件
-                            if (zipFile.exists()) {
-                                zipFile.delete()
-                            }
-                        }, onComplete = {
-                            latch.countDown()
-                        })
-                } else if (fileListIsEmpty) {
-                    //反馈问题给服务端
-                    App.getGlobalVM().uploadLogFileErrCallBack(
-                        taskId = taskInfo.taskId,
-                        msg = "对应时间段的日志文件列表为空",
-                        onComplete = {
-                            latch.countDown()
-                        })
-                }
-
-                //等待异步操作完成
                 latch.await()
             })
         })
@@ -385,8 +421,8 @@ object ZLog {
      * @return 返回信息
      */
     private fun getRegisterInfo(): Triple<String, String, Boolean> {
-        val sessionId = App.getSp().getString(SPConstant.SESSION_ID_KEY)
-        val sharedSecret = App.getSp().getString(SPConstant.SHARED_SECRET_KEY)
+        val sessionId = defaultMMKV.decodeString(Constant.SESSION_ID_KEY) ?: ""
+        val sharedSecret = defaultMMKV.decodeString(Constant.SHARED_SECRET_KEY) ?: ""
         return Triple(sessionId, sharedSecret, sessionId.isNotEmpty() && sharedSecret.isNotEmpty())
     }
 
@@ -406,7 +442,7 @@ object ZLog {
      * @param identify 可以是用户手机号等标识用户身份的内容
      */
     fun changeIdentifyValue(identify: String) {
-        App.getSp().putString(SPConstant.IDENTIFY_VALUE_KEY, identify)
+        defaultMMKV.encode(Constant.IDENTIFY_VALUE_KEY, identify)
 
         ZLog.identify = identify
     }

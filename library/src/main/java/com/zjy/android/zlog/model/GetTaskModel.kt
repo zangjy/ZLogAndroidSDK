@@ -10,7 +10,7 @@ import com.google.gson.annotations.SerializedName
  */
 data class GetTaskModel(
     @SerializedName("data")
-    val data: MutableList<GetTaskInfo> = mutableListOf()
+    val data: MutableList<GetTaskInfo> = mutableListOf(),
 ) : BaseModel() {
     data class GetTaskInfo(
         @SerializedName("start_time")
@@ -18,6 +18,6 @@ data class GetTaskModel(
         @SerializedName("end_time")
         val endTime: Long = 0,
         @SerializedName("task_id")
-        val taskId: String = ""
+        val taskId: String = "",
     )
 }

@@ -1,7 +1,6 @@
 package com.zjy.android.zlog.model
 
 import com.google.gson.annotations.SerializedName
-import com.zjy.android.zlog.constant.SPConstant
 
 /**
  * 文件名：VerifySharedKeyModel
@@ -11,9 +10,5 @@ import com.zjy.android.zlog.constant.SPConstant
  */
 data class VerifySharedKeyModel(
     @SerializedName("decrypt_data")
-    var decryptData: String = ""
-) : BaseModel() {
-    fun isSuccessAndNotEmpty(): Boolean {
-        return status == SPConstant.SUCCESS_CODE && decryptData.isNotEmpty()
-    }
-}
+    var decryptData: String = "",
+) : BaseModel()

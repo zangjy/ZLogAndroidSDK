@@ -1,5 +1,7 @@
 package com.zjy.android.zlog.util
 
+import com.tencent.mmkv.MMKV
+import com.zjy.android.zlog.constant.Constant
 import com.zjy.android.zlog.proto.LogOuterClass.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,12 +15,9 @@ import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
-import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 /**
  * 文件名：ZLog
@@ -27,60 +26,99 @@ import java.util.concurrent.TimeUnit
  * 描述：
  */
 class ZLogUtil private constructor(private val builder: Builder) {
+
     //<editor-fold desc="基础配置">
     /**
      * 日志文件的根目录
      */
-    private var rootPath =
-        File(App.getApplication().filesDir.absolutePath, builder.rootPath.ifEmpty { "zlog" })
+    private val rootDir by lazy {
+        File(
+            App.getApplication().filesDir.absolutePath,
+            builder.rootPath.ifEmpty { "zlog" }
+        )
+    }
 
     /**
      * 日志文件过期时间（毫秒）
      */
-    private var expireMillis =
-        (if (builder.expireDays <= 0) 7 else builder.expireDays) * 1000 * 24 * 60 * 60
+    private val expireMillis by lazy {
+        (if (builder.expireDays <= 0) {
+            7
+        } else {
+            builder.expireDays
+        }) * 1000 * 24 * 60 * 60
+    }
 
     /**
      * 日志文件的后缀
      */
-    private var logSuffix = "${if (builder.isOfflineLog) "" else "-tmp"}.zlog"
+    private val logSuffix by lazy {
+        (if (builder.isOfflineLog) {
+            ""
+        } else {
+            "-tmp"
+        }) + ".zlog"
+    }
 
     /**
-     * 缓存文件大小（字节）
+     * 缓冲文件大小（字节）
      */
-    private var cacheFileSize =
-        (if (builder.cacheFileSize <= 0) 64 else builder.cacheFileSize) * 1024
+    private val cacheFileSize by lazy {
+        (if (builder.cacheFileSize <= 0) {
+            64
+        } else {
+            builder.cacheFileSize
+        }) * 1024
+    }
 
     /**
      * 单个日志文件最大大小（字节）
      */
-    private var maxFileSize =
-        (if (builder.maxFileSize <= 0) 50 else builder.maxFileSize) * 1024 * 1024
+    private val maxFileSize by lazy {
+        (if (builder.maxFileSize <= 0) {
+            50
+        } else {
+            builder.maxFileSize
+        }) * 1024 * 1024
+    }
     //</editor-fold>
 
     /**
-     * 日志锁
+     * 用于记录写入位置
      */
-    private val logLock = SafeReadWriteLock()
+    private val wPosMMKV by lazy {
+        MMKV.mmkvWithID(Constant.W_POS_MMKV_NAME)
+    }
 
     /**
-     * 创建一个协程作用域，用于管理协程的生命周期和执行环境
+     * 日志读写锁
      */
-    private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val logLock by lazy {
+        SafeReadWriteLock()
+    }
 
     /**
-     * 创建一个用于协程间通信的通道，传输 ByteArray 类型的数据
+     * 创建一个协程作用域，处理IO操作
      */
-    private val writeChannel = Channel<ByteArray>(capacity = Channel.UNLIMITED)
+    private val coroutineScope by lazy {
+        CoroutineScope(Dispatchers.IO + SupervisorJob())
+    }
 
-    //<editor-fold desc="缓存文件相关">
     /**
-     * 缓存文件
+     * 创建一个用于协程间通信的通道，传输ByteArray类型的数据
+     */
+    private val writeChannel by lazy {
+        Channel<ByteArray>(capacity = Channel.UNLIMITED)
+    }
+
+    //<editor-fold desc="缓冲文件相关">
+    /**
+     * 缓冲文件
      */
     private var cacheFile: RandomAccessFile? = null
 
     /**
-     * 缓存文件的缓冲区
+     * 缓冲文件的缓冲区
      */
     private var cacheFileBuffer: MappedByteBuffer? = null
     //</editor-fold>
@@ -103,20 +141,11 @@ class ZLogUtil private constructor(private val builder: Builder) {
     //</editor-fold>
 
     /**
-     * 合并缓存文件到主文件的间隔（毫秒）
-     */
-    private var mergeCacheFileMillis =
-        (if (builder.mergeCacheFileSeconds <= 0) 30 else builder.mergeCacheFileSeconds) * 1000
-
-    /**
-     * 合并缓存文件到主文件的线程
-     */
-    private val mergeCacheFileExecutor = Executors.newSingleThreadScheduledExecutor()
-
-    /**
      * 通用格式化日期
      */
-    private val dateFormat = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
+    private val dateFormat by lazy {
+        SimpleDateFormat("yyyyMMdd", Locale.getDefault())
+    }
 
     /**
      * 关闭标记
@@ -129,20 +158,18 @@ class ZLogUtil private constructor(private val builder: Builder) {
         createCacheFile()
         createNewLogFile()
         startWriting()
-
-        mergeCacheFileExecutor.scheduleAtFixedRate({
-            logLock.writeLock().runUnderLock(onLock = {
-                mergeFile()
-            }, waitTime = 2000)
-        }, mergeCacheFileMillis, mergeCacheFileMillis, TimeUnit.MILLISECONDS)
     }
 
     /**
      * 如果日志根目录不存在则先创建
      */
     private fun createBaseDir() {
-        if (!rootPath.exists()) {
-            rootPath.mkdirs()
+        try {
+            if (!rootDir.exists()) {
+                rootDir.mkdirs()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -150,79 +177,93 @@ class ZLogUtil private constructor(private val builder: Builder) {
      * 清理过期文件并记录文件序号
      */
     private fun removeExpireFiles() {
-        val filePattern = "^(\\d{8})-(\\d{3})?${logSuffix}$".toRegex()
+        try {
+            //示例匹配的文件名：20240606-001.zlog、20240606-001-tmp.zlog
+            val filePattern = "^(\\d{8})-(\\d{3})?${logSuffix}$".toRegex()
 
-        val currentTime = System.currentTimeMillis()
+            val currentTime = System.currentTimeMillis()
 
-        rootPath.listFiles()?.forEach { file ->
-            val matchResult = filePattern.find(file.name)
-            if (matchResult != null && matchResult.groupValues.size == 3) {
-                try {
-                    val fileDate = dateFormat.parse(matchResult.groupValues[1])?.time ?: 0
-                    if (fileDate < currentTime - expireMillis) {
-                        file.delete()
-                    } else {
-                        fileNumber = matchResult.groupValues[2].toInt()
+            rootDir.listFiles()?.forEach { file ->
+                filePattern.find(file.name)?.let { matchResult ->
+                    if (matchResult.groupValues.size == 3) {
+                        val fileDate = dateFormat.parse(matchResult.groupValues[1])?.time ?: 0
+                        if (fileDate < currentTime - expireMillis) {
+                            file.delete()
+                        } else {
+                            fileNumber = matchResult.groupValues[2].toInt()
+                        }
                     }
-                } catch (e: ParseException) {
-                    e.printStackTrace()
                 }
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
     /**
-     * 创建缓存文件
+     * 创建缓冲文件
      */
     private fun createCacheFile() {
-        val logFile = File(rootPath, "cache${logSuffix}")
-        if (!logFile.exists()) {
-            logFile.createNewFile()
+        try {
+            //示例创建的文件名：cache.zlog、cache-tmp.zlog
+            val logFile = File(rootDir, "cache${logSuffix}")
+            if (!logFile.exists()) {
+                logFile.createNewFile()
+            }
+
+            cacheFile = RandomAccessFile(logFile, "rw")
+
+            cacheFileBuffer = cacheFile!!.channel.map(
+                FileChannel.MapMode.READ_WRITE,
+                0,
+                cacheFileSize.toLong()
+            )
+
+            //从上次的位置继续写
+            cacheFileBuffer!!.position(wPosMMKV.decodeInt(Constant.CACHE_FILE_LAST_WRITE_POS_KEY + logSuffix))
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-
-        cacheFile = RandomAccessFile(logFile, "rw")
-
-        cacheFileBuffer = cacheFile!!.channel.map(
-            FileChannel.MapMode.READ_WRITE,
-            0,
-            cacheFileSize.toLong()
-        )
     }
 
     /**
      * 创建新的日志文件
      */
     private fun createNewLogFile() {
-        val logFile = getToadyLogFile()
-        if (!logFile.exists()) {
-            logFile.createNewFile()
+        try {
+            val logFile = getNewLogFile()
+            if (!logFile.exists()) {
+                logFile.createNewFile()
+            }
+
+            closeFile()
+
+            currentFile = RandomAccessFile(logFile, "rw")
+
+            //从上次的位置继续写
+            currentFile!!.seek(currentFile!!.length())
+
+            currentFileChannel = currentFile!!.channel
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-
-        closeFile()
-
-        currentFile = RandomAccessFile(logFile, "rw")
-        currentFile!!.seek(currentFile!!.length())
-
-        currentFileChannel = currentFile!!.channel
     }
 
     /**
-     * 获取当天带序号的日志文件
-     * @return File 返回对应文件
+     * 获取新的日志文件
+     * @return File 返回对应文件，文件名示例：20240606-001.zlog、20240606-001-tmp.zlog
      */
-    private fun getToadyLogFile(): File {
-        return File(
-            rootPath,
-            "${dateFormat.format(System.currentTimeMillis())}-${formatFileNumber()}${logSuffix}"
-        )
-    }
+    private fun getNewLogFile() = File(
+        rootDir,
+        "${dateFormat.format(System.currentTimeMillis())}-${formatFileNumber()}${logSuffix}"
+    )
 
     /**
      * 格式化日志文件序号
      * @return String 返回格式化后的序号，不足三位前面补0
      */
     private fun formatFileNumber(): String {
-        return String.format("%03d", fileNumber)
+        return String.format(Locale.getDefault(), "%03d", fileNumber)
     }
 
     /**
@@ -231,72 +272,88 @@ class ZLogUtil private constructor(private val builder: Builder) {
     private fun startWriting() {
         coroutineScope.launch {
             for (logData in writeChannel) {
-                var writeSuccess = false
+                try {
+                    //标记是否写入成功
+                    var writeSuccess = false
 
-                while (!writeSuccess) {
-                    logLock.writeLock().runUnderLock(onLock = {
-                        val shouldCompress = builder.compress
-                        val shouldEncrypt = builder.secretKey.isNotBlank()
+                    while (!writeSuccess) {
+                        //尝试获取写锁，获取失败时延时100ms再次重试，获取到写锁并写入完成后标记为写入成功，继续写下一条
+                        logLock.runUnderWriteLock(onLock = {
+                            //是否启用压缩
+                            val shouldCompress = builder.compress
 
-                        //压缩数据
-                        val compressedData = if (shouldCompress) {
-                            GZIPUtil.compressBytes(logData)
-                        } else {
-                            logData
-                        }
+                            //是否启用加密
+                            val shouldEncrypt = builder.secretKey.isNotEmpty()
 
-                        //加密数据
-                        val encryptedData = if (shouldEncrypt) {
-                            AESUtil.encryptBytes(compressedData, builder.secretKey)
-                        } else {
-                            compressedData
-                        }
+                            //是否启用加密标志位
+                            val encryptionFlag: Byte = if (shouldEncrypt) 1 else 0
 
-                        //是否启用了加密
-                        val encryptionFlag: Byte = if (shouldEncrypt) 1 else 0
+                            //是否启用压缩标志位
+                            val compressionFlag: Byte = if (shouldCompress) 1 else 0
 
-                        //是否启用了压缩
-                        val compressionFlag: Byte = if (shouldCompress) 1 else 0
+                            //如果启用压缩，则对logData进行压缩，否则直接使用原始的logData
+                            val compressedData = if (shouldCompress) {
+                                GZIPUtil.compressBytes(logData)
+                            } else {
+                                logData
+                            }
 
-                        //四个字节记录数据的长度
-                        val lengthBuffer = ByteBuffer.allocate(4).putInt(encryptedData.size)
-                        lengthBuffer.flip()
+                            //如果启用加密，则对compressedData进行加密，否则直接使用compressedData
+                            val encryptedData = if (shouldEncrypt) {
+                                AESUtil.encryptBytes(compressedData, builder.secretKey)
+                            } else {
+                                compressedData
+                            }
 
-                        //创建一个缓冲区
-                        val dataToWrite =
-                            ByteBuffer.allocate(1 + 1 + 1 + 4 + 1 + encryptedData.size).apply {
+                            //使用四个字节日志数据的长度
+                            val lengthByteBuffer = ByteBuffer.allocate(4).putInt(encryptedData.size)
+                            lengthByteBuffer.flip()
+
+                            //处理后的日志数据
+                            val logDataByteBuffer = ByteBuffer.allocate(
+                                8 + encryptedData.size
+                            ).apply {
                                 //头部开始标记
                                 put(0xFF.toByte())
                                 put(encryptionFlag)
                                 put(compressionFlag)
-                                put(lengthBuffer)
+                                put(lengthByteBuffer)
                                 //头部结束标记
                                 put(0xFF.toByte())
                                 put(encryptedData)
                                 flip()
                             }
 
-                        //当前数据的大小
-                        val dataToWriteSize = dataToWrite.remaining()
+                            //处理后的日志数据字节数
+                            val logDataByteBufferSize = logDataByteBuffer.remaining()
 
-                        //如果当前数据的大小超过缓冲区设置的大小，则直接追加到主日志文件，不再经过缓冲区
-                        if (dataToWriteSize > cacheFileSize) {
-                            //追加数据到主日志文件
-                            appendByteBufferToCurrentFile(dataToWrite)
-                        } else {
-                            //如果缓冲区不足以写入当前数据，则先将缓存文件合入主文件后再进行写入
-                            if (dataToWriteSize > (cacheFileBuffer?.remaining() ?: 0)) {
-                                mergeFile()
+                            //如果处理后的日志数据字节数超过设置的缓冲区字节数，则直接追加到主日志文件，不再经过缓冲区
+                            if (logDataByteBufferSize > cacheFileSize) {
+                                appendByteBufferToCurrentFile(logDataByteBuffer)
+                            } else {
+                                //如果缓冲区剩余字节数不足以写入当前数据，则先将缓冲区数据合入主文件后再进行写入
+                                if (logDataByteBufferSize > (cacheFileBuffer?.remaining() ?: 0)) {
+                                    mergeCacheFile()
+                                }
+
+                                //将数据写入缓冲区
+                                cacheFileBuffer?.put(logDataByteBuffer)
+                                cacheFileBuffer?.force()
+
+                                //记录上次写入位置
+                                wPosMMKV.encode(
+                                    Constant.CACHE_FILE_LAST_WRITE_POS_KEY + logSuffix,
+                                    cacheFileBuffer?.position() ?: 0
+                                )
                             }
 
-                            //将数据写入缓冲区
-                            cacheFileBuffer?.put(dataToWrite)
-                        }
-
-                        writeSuccess = true
-                    }, onLockFailed = {
-                        Thread.sleep(500)
-                    })
+                            writeSuccess = true
+                        }, onLockFailed = {
+                            Thread.sleep(100)
+                        })
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
 
                 //如果已经被标记为关闭，则不再读取并写日志
@@ -311,29 +368,35 @@ class ZLogUtil private constructor(private val builder: Builder) {
     }
 
     /**
-     * 将缓冲区数据合入主文件
+     * 将缓冲区数据追加到主文件
      */
-    private fun mergeFile() {
+    private fun mergeCacheFile() {
         try {
-            cacheFileBuffer?.let { buffer ->
+            cacheFileBuffer?.let { cacheFileBuffer ->
                 //获取缓冲区有效数据长度
-                val dataSize = buffer.position()
+                val cacheFileBufferCurPos = cacheFileBuffer.position()
 
-                //如果数据不为空，则将其合并到主文件
-                if (dataSize > 0) {
+                //如果缓冲区有效数据长度大于0，则将其合并到主文件
+                if (cacheFileBufferCurPos > 0) {
                     //将缓冲区切换到读模式
-                    buffer.flip()
+                    cacheFileBuffer.flip()
 
                     //将缓冲区中有效数据提取出来
-                    val dataToWrite = ByteBuffer.allocate(dataSize)
-                    dataToWrite.put(buffer)
-                    dataToWrite.flip()
+                    val cacheFileByteBuffer = ByteBuffer.allocate(cacheFileBufferCurPos)
+                    cacheFileByteBuffer.put(cacheFileBuffer)
+                    cacheFileByteBuffer.flip()
 
                     //追加数据到主日志文件
-                    appendByteBufferToCurrentFile(dataToWrite)
+                    appendByteBufferToCurrentFile(cacheFileByteBuffer)
 
-                    //清空缓存文件的缓冲区
-                    buffer.clear()
+                    //清空缓冲区
+                    cacheFileBuffer.clear()
+
+                    //重置写入位置
+                    wPosMMKV.encode(
+                        Constant.CACHE_FILE_LAST_WRITE_POS_KEY + logSuffix,
+                        0
+                    )
                 }
             }
         } catch (e: Exception) {
@@ -348,7 +411,6 @@ class ZLogUtil private constructor(private val builder: Builder) {
     private fun appendByteBufferToCurrentFile(data: ByteBuffer) {
         try {
             currentFileChannel?.write(data)
-
             currentFileChannel?.force(true)
 
             //如果主日志文件大小超出设置的最大值，则创建新的主文件
@@ -365,45 +427,50 @@ class ZLogUtil private constructor(private val builder: Builder) {
      * 读取日志内容(需要在子线程中执行，并且只适合读取实时日志这类小数据的文件)
      * @param startTimeSeconds 起始的时间戳（秒）
      * @param endTimeSeconds 截止的时间戳（秒）
-     * @param removeFilesAfterReader 读取完成后是否删除文件
-     * @return List<String> 返回日志内容列表
+     * @param successCallBack 回调日志内容列表
+     * @param errorCallBack 失败时的回调
      */
     fun readLog(
         startTimeSeconds: Long = System.currentTimeMillis() / 1000,
         endTimeSeconds: Long = startTimeSeconds,
-        removeFilesAfterReader: Boolean = true
-    ): List<Log> {
-        val logEntries: MutableList<Log> = mutableListOf()
+        successCallBack: (logList: MutableList<Log>) -> Unit,
+        errorCallBack: () -> Unit,
+    ) {
+        try {
+            logLock.runUnderWriteLock(onLock = {
+                logLock.runUnderReadLock(onLock = {
+                    //先将缓冲区数据追加到主文件
+                    mergeCacheFile()
 
-        logLock.readLock().runUnderLock(onLock = {
-            val fileList = getLogFilesInRange(startTimeSeconds, endTimeSeconds)
+                    val logList: MutableList<Log> = mutableListOf()
 
-            fileList.forEach { file ->
-                logEntries.addAll(readLogFile(file))
-            }
-
-            if (removeFilesAfterReader) {
-                //当天的日期
-                val currentTime = dateFormat.format(System.currentTimeMillis())
-
-                //是否需要重新创建文件
-                var reCreateLogFile = false
-
-                for (file in fileList) {
-                    if (file.name.contains(currentTime)) {
-                        reCreateLogFile = true
+                    getLogFilesInRange(startTimeSeconds, endTimeSeconds).forEach { file ->
+                        logList.addAll(readLogFile(file))
+                        //如果是实时日志，在读取后需要将文件内容清空
+                        if (!builder.isOfflineLog) {
+                            RandomAccessFile(file, "rw").use { raf ->
+                                raf.setLength(0)
+                            }
+                        }
                     }
-                    file.delete()
-                }
 
-                if (reCreateLogFile) {
-                    fileNumber = 1
-                    createNewLogFile()
-                }
-            }
-        })
+                    //如果是实时日志，在读取后需要切换到当日的第一个文件，例如切换到20240606-001-tmp.zlog
+                    if (!builder.isOfflineLog) {
+                        fileNumber = 1
+                        createNewLogFile()
+                    }
 
-        return logEntries
+                    successCallBack.invoke(logList)
+                }, onLockFailed = {
+                    errorCallBack.invoke()
+                })
+            }, onLockFailed = {
+                errorCallBack.invoke()
+            })
+        } catch (e: Exception) {
+            e.printStackTrace()
+            errorCallBack.invoke()
+        }
     }
 
     /**
@@ -480,25 +547,38 @@ class ZLogUtil private constructor(private val builder: Builder) {
      * @param startTimeSeconds 起始的时间戳（秒）
      * @param endTimeSeconds 截止的时间戳（秒）
      * @param outputFilePath 压缩后的Zip文件路径
-     * @return 第一个值是状态，如果文件不存在第二个参数返回true
+     * @param successCallBack 第一个值是是否成功，如果文件不存在第二个参数返回true
+     * @param errorCallBack 失败时的回调
      */
     fun zipLogFiles(
         startTimeSeconds: Long = System.currentTimeMillis() / 1000,
         endTimeSeconds: Long = startTimeSeconds,
-        outputFilePath: String
-    ): Pair<Boolean, Boolean> {
-        var result: Pair<Boolean, Boolean> = Pair(false, false)
+        outputFilePath: String,
+        successCallBack: (isSuccess: Boolean, noFile: Boolean) -> Unit,
+        errorCallBack: () -> Unit,
+    ) {
+        try {
+            logLock.runUnderWriteLock(onLock = {
+                logLock.runUnderReadLock(onLock = {
+                    //先将缓冲区数据追加到主文件
+                    mergeCacheFile()
 
-        logLock.readLock().runUnderLock(onLock = {
-            val fileList = getLogFilesInRange(startTimeSeconds, endTimeSeconds)
-            result = if (fileList.isEmpty()) {
-                Pair(false, true)
-            } else {
-                Pair(ZIPUtil.zipFiles(fileList, outputFilePath), false)
-            }
-        })
-
-        return result
+                    val fileList = getLogFilesInRange(startTimeSeconds, endTimeSeconds)
+                    if (fileList.isEmpty()) {
+                        successCallBack.invoke(false, true)
+                    } else {
+                        successCallBack.invoke(ZIPUtil.zipFiles(fileList, outputFilePath), false)
+                    }
+                }, onLockFailed = {
+                    errorCallBack.invoke()
+                })
+            }, onLockFailed = {
+                errorCallBack.invoke()
+            })
+        } catch (e: Exception) {
+            e.printStackTrace()
+            errorCallBack.invoke()
+        }
     }
 
     /**
@@ -509,32 +589,29 @@ class ZLogUtil private constructor(private val builder: Builder) {
      */
     private fun getLogFilesInRange(
         startTimeSeconds: Long,
-        endTimeSeconds: Long
+        endTimeSeconds: Long,
     ): List<File> {
         val logFilesInRange = mutableListOf<File>()
 
-        val startOfDaySeconds = getDaySeconds(startTimeSeconds, true)
-        val endOfDaySeconds = getDaySeconds(endTimeSeconds, false)
+        try {
+            val startOfDaySeconds = getDaySeconds(startTimeSeconds, true)
+            val endOfDaySeconds = getDaySeconds(endTimeSeconds, false)
 
-        val filePattern = "^(\\d{8})-(\\d{3})?${logSuffix}$".toRegex()
+            val filePattern = "^(\\d{8})-(\\d{3})?${logSuffix}$".toRegex()
 
-        val matchingFiles = rootPath.listFiles()?.filter { file ->
-            val matchResult = filePattern.find(file.name)
-            matchResult != null && matchResult.groupValues.size == 3
-        }
-
-        matchingFiles?.forEach { file ->
-            val matchResult = filePattern.find(file.name)
-            if (matchResult != null) {
-                try {
+            rootDir.listFiles()?.filter { file ->
+                val matchResult = filePattern.find(file.name)
+                matchResult != null && matchResult.groupValues.size == 3
+            }?.forEach { file ->
+                filePattern.find(file.name)?.let { matchResult ->
                     val fileDate = (dateFormat.parse(matchResult.groupValues[1])?.time ?: 0) / 1000
                     if (fileDate in startOfDaySeconds..endOfDaySeconds) {
                         logFilesInRange.add(file)
                     }
-                } catch (e: ParseException) {
-                    e.printStackTrace()
                 }
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
 
         return logFilesInRange
@@ -578,26 +655,25 @@ class ZLogUtil private constructor(private val builder: Builder) {
      * 释放资源
      */
     fun close() {
-        logLock.writeLock().runUnderLock(onLock = {
-            try {
+        try {
+            logLock.runUnderWriteLock(onLock = {
                 writeChannel.close()
                 coroutineScope.cancel()
-                mergeCacheFileExecutor.shutdown()
 
                 closeFile()
 
                 cacheFile?.close()
                 cacheFile = null
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }, onLockFailed = {
-            closeFlag = true
-        })
+            }, onLockFailed = {
+                closeFlag = true
+            })
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     /**
-     * 关闭主文件
+     * 关闭当前的文件占用
      */
     private fun closeFile() {
         try {
@@ -622,8 +698,6 @@ class ZLogUtil private constructor(private val builder: Builder) {
             private set
         var maxFileSize: Int = 50
             private set
-        var mergeCacheFileSeconds: Long = 30
-            private set
         var compress: Boolean = true
             private set
         var secretKey: String = ""
@@ -634,57 +708,63 @@ class ZLogUtil private constructor(private val builder: Builder) {
          * @param rootPath 日志根目录
          * @return Builder
          */
-        fun rootPath(rootPath: String) = apply { this.rootPath = rootPath }
+        fun rootPath(rootPath: String) = apply {
+            this.rootPath = rootPath
+        }
 
         /**
          * 设置日志过期时间
          * @param expireDays 日志过期时间（天）
          * @return Builder
          */
-        fun expireDays(expireDays: Int) = apply { this.expireDays = expireDays }
+        fun expireDays(expireDays: Int) = apply {
+            this.expireDays = expireDays
+        }
 
         /**
          * 设置是否离线日志
          * @param isOfflineLog 是否离线日志
          * @return Builder
          */
-        fun isOfflineLog(isOfflineLog: Boolean) = apply { this.isOfflineLog = isOfflineLog }
+        fun isOfflineLog(isOfflineLog: Boolean) = apply {
+            this.isOfflineLog = isOfflineLog
+        }
 
         /**
          * 设置缓存文件大小
          * @param cacheFileSize 缓存文件大小（KB）
          * @return Builder
          */
-        fun cacheFileSize(cacheFileSize: Int) = apply { this.cacheFileSize = cacheFileSize }
+        fun cacheFileSize(cacheFileSize: Int) = apply {
+            this.cacheFileSize = cacheFileSize
+        }
 
         /**
          * 设置单个日志文件最大大小
          * @param maxFileSize 单个日志文件最大大小（MB）
          * @return Builder
          */
-        fun maxFileSize(maxFileSize: Int) = apply { this.maxFileSize = maxFileSize }
-
-        /**
-         * 设置合并缓存文件到主文件的时间间隔
-         * @param mergeCacheFileSeconds 合并缓存文件到主文件的时间间隔（秒）
-         * @return Builder
-         */
-        fun mergeCacheFileSeconds(mergeCacheFileSeconds: Long) =
-            apply { this.mergeCacheFileSeconds = mergeCacheFileSeconds }
+        fun maxFileSize(maxFileSize: Int) = apply {
+            this.maxFileSize = maxFileSize
+        }
 
         /**
          * 设置是否压缩日志
          * @param compress 是否压缩日志
          * @return Builder
          */
-        fun compress(compress: Boolean) = apply { this.compress = compress }
+        fun compress(compress: Boolean) = apply {
+            this.compress = compress
+        }
 
         /**
          * 设置加密密钥
          * @param secretKey 加密密钥
          * @return Builder
          */
-        fun secretKey(secretKey: String) = apply { this.secretKey = secretKey }
+        fun secretKey(secretKey: String) = apply {
+            this.secretKey = secretKey
+        }
 
         /**
          * 构建 ZLogUtil

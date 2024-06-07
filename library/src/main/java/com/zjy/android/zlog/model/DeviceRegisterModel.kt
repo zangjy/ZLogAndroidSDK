@@ -10,5 +10,5 @@ import com.google.gson.annotations.SerializedName
  */
 data class DeviceRegisterModel(
     @SerializedName("session_id")
-    var sessionId: String = ""
+    var sessionId: String = "",
 ) : BaseModel()

@@ -7,7 +7,7 @@ package com.zjy.android.zlog.bean
  * 描述：
  */
 data class PutOnlineLogReqBean(
-    var data: MutableList<PutOnlineLogBean> = mutableListOf()
+    var data: MutableList<PutOnlineLogBean> = mutableListOf(),
 ) {
     data class PutOnlineLogBean(
         val sequence: Long,
@@ -17,6 +17,6 @@ data class PutOnlineLogReqBean(
         val log_level: Int,
         val identify: String,
         val tag: String,
-        val msg: String
+        val msg: String,
     )
 }
