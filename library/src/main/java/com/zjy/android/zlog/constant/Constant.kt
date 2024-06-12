@@ -8,7 +8,6 @@ package com.zjy.android.zlog.constant
  */
 object Constant {
 
-    //<editor-fold desc="zlog_conf.xml">
     /**
      * 默认的MMKV
      */
@@ -38,19 +37,11 @@ object Constant {
      * 附加字段，可以用此字段记录用户身份等信息
      */
     const val IDENTIFY_VALUE_KEY = "IDENTIFY_VALUE_KEY"
-    //</editor-fold>
 
-    //<editor-fold desc="zlog_w_pos_conf.xml">
     /**
      * 记录写入位置的MMKV
      */
     const val W_POS_MMKV_NAME = "zlog_w_pos_conf"
-
-    /**
-     * 记录上次写数据的位置
-     */
-    const val CACHE_FILE_LAST_WRITE_POS_KEY = "CACHE_FILE_LAST_WRITE_POS_KEY"
-    //</editor-fold>
 
     /**
      * 服务端交互成功的标志

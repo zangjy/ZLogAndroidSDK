@@ -3,6 +3,7 @@ package com.zjy.android.zlog
 import android.app.Application
 import com.tencent.mmkv.MMKV
 import com.zjy.android.zlog.bean.PutOnlineLogReqBean
+import com.zjy.android.zlog.builder.ZLogBuilder
 import com.zjy.android.zlog.constant.Constant
 import com.zjy.android.zlog.ext.printToConsole
 import com.zjy.android.zlog.model.GetTaskModel
@@ -12,7 +13,9 @@ import com.zjy.android.zlog.util.AppUtil
 import com.zjy.android.zlog.util.DeviceUtil
 import com.zjy.android.zlog.util.SafeLock
 import com.zjy.android.zlog.util.ThreadUtil
-import com.zjy.android.zlog.util.ZLogUtil
+import com.zjy.android.zlog.zlog.BaseLog
+import com.zjy.android.zlog.zlog.OfflineLog
+import com.zjy.android.zlog.zlog.OnlineLog
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -108,30 +111,32 @@ object ZLog {
      * 离线日志实例
      */
     private val offlineLog by lazy {
-        ZLogUtil.Builder()
-            .rootPath("zlog") //设置日志根目录
-            .expireDays(7) //设置日志过期时间，单位为天
-            .isOfflineLog(true) //设置是否离线日志
-            .cacheFileSize(64) //设置缓存文件大小，单位为KB
-            .maxFileSize(50) //设置单个日志文件最大大小，单位为MB
-            .compress(true) //设置是否压缩日志
-            .secretKey(defaultMMKV.decodeString(Constant.SHARED_SECRET_KEY) ?: "") //设置加密密钥
-            .build()
+        OfflineLog(
+            ZLogBuilder.Builder()
+                .rootDir("zlog") //设置日志根目录
+                .offlineFilesExpireMillis(7 * 24 * 60 * 60 * 1000) //设置日志过期时间，单位为毫秒
+                .isOfflineLog(true) //设置是否离线日志
+                .cacheFileSizeBytes(64 * 1024) //设置缓存文件大小，单位为字节
+                .maxFileSizeBytes(50 * 1024 * 1024) //设置单个日志文件最大大小，单位为字节
+                .compress(true) //设置是否压缩日志
+                .secretKey(defaultMMKV.decodeString(Constant.SHARED_SECRET_KEY) ?: "") //设置加密密钥
+                .build()
+        )
     }
 
     /**
      * 实时日志实例
      */
     private val onlineLog by lazy {
-        ZLogUtil.Builder()
-            .rootPath("zlog") //设置日志根目录
-            .expireDays(1) //设置日志过期时间，单位为天
-            .isOfflineLog(false) //设置是否离线日志
-            .cacheFileSize(64) //设置缓存文件大小，单位为KB
-            .maxFileSize(50) //单文件大小，单位为MB
-            .compress(true) //设置是否压缩日志
-            .secretKey(defaultMMKV.decodeString(Constant.SHARED_SECRET_KEY) ?: "") //设置加密密钥
-            .build()
+        OnlineLog(
+            ZLogBuilder.Builder()
+                .rootDir("zlog") //设置日志根目录
+                .isOfflineLog(false) //设置是否离线日志
+                .cacheFileSizeBytes(2048 * 1024) //设置缓存文件大小，单位为字节
+                .compress(true) //设置是否压缩日志
+                .secretKey(defaultMMKV.decodeString(Constant.SHARED_SECRET_KEY) ?: "") //设置加密密钥
+                .build()
+        )
     }
 
     /**
@@ -140,7 +145,7 @@ object ZLog {
     private var identify = ""
 
     /**
-     * 直接使用 [ZLog] 预初始化，则就不需要调用 [App.setApplication]
+     * 直接使用 [ZLog] 预初始化，不需要再调用 [App.setApplication]
      * @param application Application
      */
     fun preInit(application: Application) {
@@ -150,7 +155,7 @@ object ZLog {
     }
 
     /**
-     * 直接使用 [ZLog] 初始化，则不需要调用 [App.init]
+     * 直接使用 [ZLog] 初始化，不需要再调用 [App.init]
      * @param hostUrl 服务端地址
      * @param appId 应用ID
      * @param enableConsole 是否将日志输出到控制台
@@ -158,7 +163,7 @@ object ZLog {
     fun init(hostUrl: String, appId: String, enableConsole: Boolean) {
         App.init(hostUrl, appId, enableConsole)
 
-        //如果应用ID和上次不一致时清除默认SP文件内的数据
+        //如果应用ID和上次不一致时清除默认MMVM文件内的数据
         defaultMMKV.run {
             if ((decodeString(Constant.APP_ID_KEY) ?: "") != appId) {
                 clearAll()
@@ -374,8 +379,8 @@ object ZLog {
                     App.getApplication().cacheDir.absolutePath + File.separator + taskInfo.taskId + ".zip"
 
                 offlineLog.zipLogFiles(
-                    taskInfo.startTime,
-                    taskInfo.endTime,
+                    taskInfo.startTime * 1000,
+                    taskInfo.endTime * 1000,
                     filePath,
                     successCallBack = { isSuccess, noFile ->
                         if (isSuccess) {
@@ -445,5 +450,35 @@ object ZLog {
         defaultMMKV.encode(Constant.IDENTIFY_VALUE_KEY, identify)
 
         ZLog.identify = identify
+    }
+
+    /**
+     * 更改离线日志强制执行类型
+     * @param type 要设置的强制执行类型
+     */
+    fun changeOfflineLogForceType(type: BaseLog.ForceType) {
+        offlineLog.changeForceType(type)
+    }
+
+    /**
+     * 更改实时日志强制执行类型
+     * @param type 要设置的强制执行类型
+     */
+    fun changeOnlineLogForceType(type: BaseLog.ForceType) {
+        onlineLog.changeForceType(type)
+    }
+
+    /**
+     * 将缓存文件缓冲区数据强制写入磁盘
+     */
+    fun forceOfflineLog() {
+        offlineLog.force()
+    }
+
+    /**
+     * 将缓存文件缓冲区数据强制写入磁盘
+     */
+    fun forceOnlineLog() {
+        onlineLog.force()
     }
 }
