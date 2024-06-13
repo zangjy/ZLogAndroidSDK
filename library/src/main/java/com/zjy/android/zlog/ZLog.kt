@@ -11,7 +11,6 @@ import com.zjy.android.zlog.proto.LogOuterClass.Log
 import com.zjy.android.zlog.util.App
 import com.zjy.android.zlog.util.AppUtil
 import com.zjy.android.zlog.util.DeviceUtil
-import com.zjy.android.zlog.util.SafeLock
 import com.zjy.android.zlog.util.ThreadUtil
 import com.zjy.android.zlog.zlog.BaseLog
 import com.zjy.android.zlog.zlog.OfflineLog
@@ -31,51 +30,28 @@ import java.util.concurrent.atomic.AtomicLong
 object ZLog {
 
     /**
+     * 是否正在上传文件
+     */
+    private var isUploading = false
+
+    /**
      * 延迟第一次执行的时间
      */
     private val initialDelayMillis by lazy {
-        10 * 1000L
+        15 * 1000L
     }
 
     /**
-     * 上传实时日志的锁对象
+     * 定时查询回捞任务和上传实时日志的时间间隔（毫秒）
      */
-    private val uploadLogLock by lazy {
-        SafeLock()
-    }
-
-    /**
-     * 上传实时任务的时间间隔（毫秒）
-     */
-    private val uploadLogMillis by lazy {
+    private val executorMillis by lazy {
         30 * 1000L
     }
 
     /**
-     * 定时上传实时日志
+     * 定时查询回捞任务和上传实时日志
      */
-    private val uploadLogExecutor by lazy {
-        Executors.newSingleThreadScheduledExecutor()
-    }
-
-    /**
-     * 上传回捞任务的锁对象
-     */
-    private val uploadLogFileLock by lazy {
-        SafeLock()
-    }
-
-    /**
-     * 定时查询回捞任务的时间间隔（毫秒）
-     */
-    private val getTaskMillis by lazy {
-        30 * 1000L
-    }
-
-    /**
-     * 定时查询日志回捞任务
-     */
-    private val getTaskExecutor by lazy {
+    private val executor by lazy {
         Executors.newSingleThreadScheduledExecutor()
     }
 
@@ -182,15 +158,11 @@ object ZLog {
             }
         }
 
-        //定时上传实时日志(30s执行一次)
-        uploadLogExecutor.scheduleWithFixedDelay({
+        //定时查询回捞任务和上传实时日志
+        executor.scheduleWithFixedDelay({
             putOnlineLog()
-        }, initialDelayMillis, uploadLogMillis, TimeUnit.MILLISECONDS)
-
-        //定时查询日志回捞任务(30s执行一次)
-        getTaskExecutor.scheduleWithFixedDelay({
             getLogTask()
-        }, initialDelayMillis, getTaskMillis, TimeUnit.MILLISECONDS)
+        }, initialDelayMillis, executorMillis, TimeUnit.MILLISECONDS)
     }
 
     /**
@@ -312,46 +284,30 @@ object ZLog {
      * 上传实时日志
      */
     private fun putOnlineLog() {
-        ThreadUtil.runOnBackgroundThread(task = {
-            uploadLogLock.runUnderLock(onLock = {
-                val latch = CountDownLatch(1)
+        onlineLog.readLog(successCallBack = { logList ->
+            if (getRegisterInfo().third) {
+                val reqBean = PutOnlineLogReqBean()
 
-                onlineLog.readLog(successCallBack = { logList ->
-                    if (getRegisterInfo().third) {
-                        val reqBean = PutOnlineLogReqBean()
+                for (log in logList) {
+                    reqBean.data.add(
+                        PutOnlineLogReqBean.PutOnlineLogBean(
+                            sequence = log.sequence,
+                            system_version = log.systemVersion,
+                            app_version = log.appVersion,
+                            time_stamp = log.timestamp,
+                            log_level = log.logLevelValue,
+                            identify = log.identify,
+                            tag = log.tag,
+                            msg = log.msg
+                        )
+                    )
+                }
 
-                        for (log in logList) {
-                            reqBean.data.add(
-                                PutOnlineLogReqBean.PutOnlineLogBean(
-                                    sequence = log.sequence,
-                                    system_version = log.systemVersion,
-                                    app_version = log.appVersion,
-                                    time_stamp = log.timestamp,
-                                    log_level = log.logLevelValue,
-                                    identify = log.identify,
-                                    tag = log.tag,
-                                    msg = log.msg
-                                )
-                            )
-                        }
-
-                        if (reqBean.data.isNotEmpty()) {
-                            App.getGlobalVM().putOnlineLog(reqBean, onComplete = {
-                                latch.countDown()
-                            })
-                        } else {
-                            latch.countDown()
-                        }
-                    } else {
-                        latch.countDown()
-                    }
-                }, errorCallBack = {
-                    latch.countDown()
-                })
-
-                latch.await()
-            })
-        })
+                if (reqBean.data.isNotEmpty()) {
+                    App.getGlobalVM().putOnlineLog(reqBean, onComplete = {})
+                }
+            }
+        }, errorCallBack = {})
     }
 
     /**
@@ -360,7 +316,19 @@ object ZLog {
     private fun getLogTask() {
         if (getRegisterInfo().third) {
             App.getGlobalVM().getTask {
-                uploadLogFile(it[0])
+                if (!isUploading) {
+                    ThreadUtil.runOnBackgroundThread(task = {
+                        isUploading = true
+
+                        val latch = CountDownLatch(1)
+                        uploadLogFile(it[0]) {
+                            latch.countDown()
+                        }
+                        latch.await()
+
+                        isUploading = false
+                    })
+                }
             }
         }
     }
@@ -368,57 +336,50 @@ object ZLog {
     /**
      * 执行日志上传任务
      * @param taskInfo 任务信息
+     * @param onComplete 完成时的回调
      */
-    private fun uploadLogFile(taskInfo: GetTaskModel.GetTaskInfo) {
-        ThreadUtil.runOnBackgroundThread(task = {
-            uploadLogFileLock.runUnderLock(onLock = {
-                val latch = CountDownLatch(1)
+    private fun uploadLogFile(taskInfo: GetTaskModel.GetTaskInfo, onComplete: () -> Unit) {
+        //保存Zip的位置
+        val filePath =
+            App.getApplication().cacheDir.absolutePath + File.separator + taskInfo.taskId + ".zip"
 
-                //保存Zip的位置
-                val filePath =
-                    App.getApplication().cacheDir.absolutePath + File.separator + taskInfo.taskId + ".zip"
+        offlineLog.zipLogFiles(
+            taskInfo.startTime * 1000,
+            taskInfo.endTime * 1000,
+            filePath,
+            successCallBack = { isSuccess, noFile ->
+                if (isSuccess) {
+                    //待上传的日志文件
+                    val zipFile = File(filePath)
 
-                offlineLog.zipLogFiles(
-                    taskInfo.startTime * 1000,
-                    taskInfo.endTime * 1000,
-                    filePath,
-                    successCallBack = { isSuccess, noFile ->
-                        if (isSuccess) {
-                            //待上传的日志文件
-                            val zipFile = File(filePath)
-
-                            //上传文件
-                            App.getGlobalVM().uploadLogFile(
-                                zipFile = zipFile,
-                                onComplete = {
-                                    //删除临时文件
-                                    if (zipFile.exists()) {
-                                        zipFile.delete()
-                                    }
-                                    latch.countDown()
-                                }
-                            )
-                        } else if (noFile) {
-                            //反馈问题给服务端
-                            App.getGlobalVM().uploadLogFileErrCallBack(
-                                taskId = taskInfo.taskId,
-                                msg = "对应时间段的日志文件列表为空",
-                                onComplete = {
-                                    latch.countDown()
-                                }
-                            )
-                        } else {
-                            latch.countDown()
+                    //上传文件
+                    App.getGlobalVM().uploadLogFile(
+                        zipFile = zipFile,
+                        onComplete = {
+                            //删除临时文件
+                            if (zipFile.exists()) {
+                                zipFile.delete()
+                            }
+                            onComplete.invoke()
                         }
-                    },
-                    errorCallBack = {
-                        latch.countDown()
-                    }
-                )
-
-                latch.await()
-            })
-        })
+                    )
+                } else if (noFile) {
+                    //反馈问题给服务端
+                    App.getGlobalVM().uploadLogFileErrCallBack(
+                        taskId = taskInfo.taskId,
+                        msg = "对应时间段的日志文件列表为空",
+                        onComplete = {
+                            onComplete.invoke()
+                        }
+                    )
+                } else {
+                    onComplete.invoke()
+                }
+            },
+            errorCallBack = {
+                onComplete.invoke()
+            }
+        )
     }
 
     /**
@@ -435,8 +396,7 @@ object ZLog {
      * 直接使用 [ZLog] 关闭，就不需要调用 [ZLogUtil] 的关闭方法了
      */
     fun close() {
-        uploadLogExecutor.shutdown()
-        getTaskExecutor.shutdown()
+        executor.shutdown()
         offlineLog.close()
         onlineLog.close()
         App.getGlobalVM().close()

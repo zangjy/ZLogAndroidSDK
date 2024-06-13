@@ -114,6 +114,13 @@ abstract class BaseLog(protected val builder: ZLogBuilder) {
     private var needForce = false
 
     /**
+     * 延迟第一次执行的时间
+     */
+    private val initialDelayMillis by lazy {
+        15 * 1000L
+    }
+
+    /**
      * 定时将缓存文件缓冲区数据强制写入磁盘的时间间隔（毫秒）
      */
     private val forceMillis by lazy {
@@ -369,7 +376,7 @@ abstract class BaseLog(protected val builder: ZLogBuilder) {
                     force()
                     needForce = false
                 }
-            }, forceMillis, forceMillis, TimeUnit.MILLISECONDS)
+            }, initialDelayMillis, forceMillis, TimeUnit.MILLISECONDS)
         }
 
         forceType = type
