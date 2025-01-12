@@ -14,14 +14,6 @@ implementation 'com.github.zangjy:XBase:版本号见Github'
 implementation 'com.github.zangjy:ZLogAndroidSDK:版本号见Github'
 ```
 
-## MMKV对armv7和x86架构的支持
-
-ZLogAndroidSDK使用了MMKV对写入位置进行记录，在v1.3.5版本中MMKV放弃了对armv7和x86架构的支持，在不受支持的架构中使用，你需要
-
-1. [下载SO库](https://github.com/zangjy/MMKV/releases/tag/v1.3.5)
-2. 将SO库放到对应文件夹下  
-   ![将SO库放到对应文件夹下](https://s21.ax1x.com/2024/06/17/pk0KsC8.png)
-
 ## 在工程根目录的`build.gradle`中添加如下：
 
 ```
